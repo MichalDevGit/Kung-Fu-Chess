@@ -1,94 +1,82 @@
 #include "GameState.h"
-#include <iostream>
-#include <vector>
-#include <string>
-#include <sstream>
 
-void GameState::handleClick(int x, int y) {
+
+GameState::GameState(const Board& board)
+    : board(board)
+{}
+
+
+void GameState::handleClick(int x, int y)
+{
+    if (hasPendingMove)
+        return;
+
     int row = y / 100;
     int col = x / 100;
 
-    if (!board.isValidPosition(row, col)) return;
+    if (!board.isValidPosition(row, col))
+        return;
 
-    std::string clickedPiece = board.getPiece(row, col);
+    std::string piece = board.getPiece(row, col);
 
-    if (selectedRow == -1) {
-        if (clickedPiece != ".") {
+    if (selectedRow == -1)
+    {
+        if (piece != ".")
+        {
             selectedRow = row;
             selectedCol = col;
         }
-    } else {
 
-        if (clickedPiece != "." && clickedPiece[0] == board.getPiece(selectedRow, selectedCol)[0]) {
-            selectedRow = row;
-            selectedCol = col;
-        } else {
-            board.setPiece(row, col, board.getPiece(selectedRow, selectedCol));
-            board.setPiece(selectedRow, selectedCol, ".");
-            selectedRow = -1;
-            selectedCol = -1;
-        }
+        return;
+    }
+
+    std::string selectedPiece =
+        board.getPiece(selectedRow, selectedCol);
+
+    if (piece != "." &&
+        piece[0] == selectedPiece[0])
+    {
+        selectedRow = row;
+        selectedCol = col;
+    }
+    else
+    {
+       hasPendingMove=true;
+       fromRow=selectedRow;
+       fromCol=selectedCol;
+       toRow=row;
+       toCol=col;
+       selectedRow = -1;
+       selectedCol = -1;
     }
 }
 
-void GameState::addTime(int ms) {
+void GameState::wait(int ms)
+{
     gameClock += ms;
-}
 
-bool GameState::isValidToken(const std::string& token) {
-    if (token == ".") return true;
-    if (token.length() != 2) return false;
+    if (!hasPendingMove)
+        return;
 
-    char color = token[0];
-    char piece = token[1];
+    std::string piece = board.getPiece(fromRow, fromCol);
 
-    bool validColor = (color == 'w' || color == 'b');
-    bool validPiece = (piece == 'K' || piece == 'Q' || piece == 'R' || 
-                       piece == 'B' || piece == 'N' || piece == 'P');
-
-    return validColor && validPiece;
-}
-
-void GameState::printBoard() {
-
-    std::string line;
-    std::vector<std::vector<std::string>> board;
-    size_t expectedCols = 0;
-
-    while (std::getline(std::cin, line) && line != "Commands:") {
-        if (line == "Board:") continue;
-        
-        std::stringstream ss(line);
-        std::string token;
-        std::vector<std::string> row;
-        
-        while (ss >> token) {
-            if (!isValidToken(token)) {
-                std::cout << "ERROR UNKNOWN_TOKEN" << std::endl;
-                return 0;
-            }
-            row.push_back(token);
-        }
-
-        if (!row.empty()) {
-            if (expectedCols == 0) {
-                expectedCols = row.size();
-            } else if (row.size() != expectedCols) {
-                std::cout << "ERROR ROW_WIDTH_MISMATCH" << std::endl;
-                return 0;
-            }
-            board.push_back(row);
-        }
+    if (piece != ".")
+    {
+        board.setPiece(toRow, toCol, piece);
+        board.setPiece(fromRow, fromCol, ".");
     }
 
-    while (std::getline(std::cin, line)) {
-        if (line == "print board") {
-            for (size_t i = 0; i < board.size(); ++i) {
-                for (size_t j = 0; j < board[i].size(); ++j) {
-                    std::cout << board[i][j] << (j == board[i].size() - 1 ? "" : " ");
-                }
-                std::cout << std::endl;
-            }
-        }
-    }
+    hasPendingMove = false;
+
+    selectedRow = -1;
+    selectedCol = -1;
+    fromRow = -1;
+    fromCol = -1;
+    toRow = -1;
+    toCol = -1;
+}
+
+void GameState::printBoard() const
+{
+    board.print();
 }

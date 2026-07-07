@@ -3,23 +3,32 @@
 
 #include "Board.h"
 
-class GameState {
+class GameState
+{
 private:
     Board board;
-    int selectedRow;
-    int selectedCol;
-    long long gameClock;
+
+    int selectedRow=-1;
+    int selectedCol=-1;
+
+    long long gameClock=0;
+
+    bool hasPendingMove=false;
+    
+    int fromRow=-1;
+    int fromCol=-1;
+    
+    int toRow=-1;
+    int toCol=-1;
 
 public:
-    GameState(const Board& b) : board(b), selectedRow(-1), selectedCol(-1), gameClock(0) {}
+    GameState(const Board& b);
 
     void handleClick(int x, int y);
 
-    void addTime(int ms);
+    void wait(int ms);
 
     void printBoard() const;
-
-    bool isValidToken(const std::string& token);
 };
 
 #endif
