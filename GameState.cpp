@@ -126,6 +126,16 @@ void GameState::wait(int ms)
     {
         board.setPiece(toRow, toCol, piece);
         board.setPiece(fromRow, fromCol, ".");
+
+        if (piece == "wP" && toRow == 0)
+        {
+            board.setPiece(toRow, toCol, "wQ");
+        }
+    
+        if (piece == "bP" && toRow == board.getRows() - 1)
+        {
+            board.setPiece(toRow, toCol, "bQ");
+        }
     }
     
     hasPendingMove = false;
@@ -142,7 +152,7 @@ void GameState::wait(int ms)
     {
         gameOver = true;
     }
-    
+
 }
 
 void GameState::printBoard() const
@@ -187,12 +197,13 @@ bool GameState::isPawnMove(const std::string& piece,
     int fromRow,
     int fromCol,
     int toRow,
-    int toCol) const{
+    int toCol) const
+{
     std::string destination = board.getPiece(toRow, toCol);
 
     if (piece[0] == 'w')
     {
-       // move forward
+        // move forward one cell
         if (toCol == fromCol &&
             toRow == fromRow - 1 &&
             destination == ".")
@@ -200,7 +211,17 @@ bool GameState::isPawnMove(const std::string& piece,
             return true;
         }
 
-            // capture
+        // move forward two cells from start row
+        if (fromRow == board.getRows() - 1 &&
+            toCol == fromCol &&
+            toRow == fromRow - 2 &&
+            board.getPiece(fromRow - 1, fromCol) == "." &&
+            destination == ".")
+        {
+            return true;
+        }
+
+        // capture
         if (toRow == fromRow - 1 &&
             std::abs(toCol - fromCol) == 1 &&
             destination != "." &&
@@ -211,25 +232,36 @@ bool GameState::isPawnMove(const std::string& piece,
     }
     else
     {
-        // move forward
+        // move forward one cell
         if (toCol == fromCol &&
             toRow == fromRow + 1 &&
             destination == ".")
         {
             return true;
         }
+
+        // move forward two cells from start row
+        if (fromRow == 0 &&
+            toCol == fromCol &&
+            toRow == fromRow + 2 &&
+            board.getPiece(fromRow + 1, fromCol) == "." &&
+            destination == ".")
+        {
+            return true;
+        }
+
         // capture
         if (toRow == fromRow + 1 &&
             std::abs(toCol - fromCol) == 1 &&
-                        destination != "." &&
+            destination != "." &&
             destination[0] == 'w')
         {
             return true;
         }
     }
+
     return false;
 }
-
 
 bool GameState::isLegalMove(const std::string& piece,
     int fromRow,
