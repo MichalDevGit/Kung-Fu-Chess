@@ -37,7 +37,7 @@ int main()
 
     while (std::getline(std::cin, line) && line != "Commands:")
     {
-        if (line == "Board:")
+        if (line.find("Board:") != std::string::npos)
             continue;
 
         if (line.empty())
