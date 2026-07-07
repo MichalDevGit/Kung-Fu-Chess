@@ -51,6 +51,14 @@ void GameState::handleClick(int x, int y)
         }
 
         hasPendingMove = true;
+        moveFinishTime =
+        gameClock +
+        getMoveDistance(selectedPiece,
+                        selectedRow,
+                        selectedCol,
+                        row,
+                        col) * MOVE_DURATION;
+
         fromRow = selectedRow;
         fromCol = selectedCol;
         toRow = row;
@@ -61,23 +69,64 @@ void GameState::handleClick(int x, int y)
     }
 }
 
+int GameState::getMoveDistance(const std::string& piece,
+    int fromRow,
+    int fromCol,
+    int toRow,
+    int toCol) const
+{
+    int dr = std::abs(toRow - fromRow);
+    int dc = std::abs(toCol - fromCol);
+
+    switch (piece[1])
+    {
+        case 'R':
+            return dr + dc;
+
+        case 'B':
+            return dr;
+
+        case 'Q':
+            if (dr == dc)
+                return dr;
+
+            return dr + dc;
+
+        case 'K':
+            return 1;
+
+        case 'N':
+            return 1;
+
+        case 'P':
+            return 1;
+
+        default:
+            return 1;
+    }
+}
+
 void GameState::wait(int ms)
 {
     gameClock += ms;
 
     if (!hasPendingMove)
         return;
-
+    
+    if (gameClock < moveFinishTime)
+        return;
+    
     std::string piece = board.getPiece(fromRow, fromCol);
-
+    
     if (piece != ".")
     {
         board.setPiece(toRow, toCol, piece);
         board.setPiece(fromRow, fromCol, ".");
     }
-
+    
     hasPendingMove = false;
-
+    moveFinishTime = 0;
+    
     selectedRow = -1;
     selectedCol = -1;
     fromRow = -1;
@@ -90,8 +139,6 @@ void GameState::printBoard() const
 {
     board.print();
 }
-
-
 
 bool GameState::isPathClear(int fromRow,
     int fromCol,
@@ -178,7 +225,7 @@ bool GameState::isLegalMove(const std::string& piece,
     int fromRow,
     int fromCol,
     int toRow,
-    int toCol) const
+    int toCol) const 
 {
 
     std::string destination = board.getPiece(toRow, toCol);
