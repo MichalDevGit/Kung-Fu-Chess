@@ -17,15 +17,15 @@ class GameState
     
     bool hasPendingMove = false;
     bool isAirborne = false;
+    std::string airbornePiece;
+
+    std::string movingPiece;
 
     int airborneRow = -1;
     int airborneCol = -1;
-    
+
     static const int MOVE_DURATION = 1000;
-    
-    long long moveArrivalTime = 0;
     long long moveFinishTime = 0;
-    
 
     int fromRow = -1;
     int fromCol = -1;

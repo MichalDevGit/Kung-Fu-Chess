@@ -22,7 +22,7 @@ void GameState::handleClick(int x, int y)
 
     if (isAirborne &&
         piece != "." &&
-        piece[0] != board.getPiece(airborneRow, airborneCol)[0] &&
+        piece[0] != airbornePiece[0] &&
         row == airborneRow &&
         col == airborneCol)
         {
@@ -76,7 +76,7 @@ void GameState::handleClick(int x, int y)
         fromCol = selectedCol;
         toRow = row;
         toCol = col;
-
+        movingPiece = selectedPiece;
         selectedRow = -1;
         selectedCol = -1;
     }
@@ -140,9 +140,7 @@ void GameState::wait(int ms)
         return;
     }
     
-    std::string piece = board.getPiece(fromRow, fromCol);
-    std::string destination = board.getPiece(toRow, toCol);
-
+    std::string piece = movingPiece;
     if (piece != ".")
     {
         board.setPiece(toRow, toCol, piece);
@@ -161,7 +159,7 @@ void GameState::wait(int ms)
     
     hasPendingMove = false;
     moveFinishTime = 0;
-    
+    movingPiece = "";
     selectedRow = -1;
     selectedCol = -1;
     fromRow = -1;
@@ -366,6 +364,7 @@ void GameState::jump(int x, int y)
 
     airborneRow = row;
     airborneCol = col;
+    airbornePiece = board.getPiece(row, col);
 
     hasPendingMove = true;
     moveFinishTime = gameClock + 1000;
