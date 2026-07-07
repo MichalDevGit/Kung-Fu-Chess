@@ -1,10 +1,10 @@
 #include "GameState.h"
-
+#include <string>
 
 GameState::GameState(const Board& board)
     : board(board)
-{}
-
+{
+}
 
 void GameState::handleClick(int x, int y)
 {
@@ -30,8 +30,7 @@ void GameState::handleClick(int x, int y)
         return;
     }
 
-    std::string selectedPiece =
-        board.getPiece(selectedRow, selectedCol);
+    std::string selectedPiece = board.getPiece(selectedRow, selectedCol);
 
     if (piece != "." &&
         piece[0] == selectedPiece[0])
@@ -41,13 +40,14 @@ void GameState::handleClick(int x, int y)
     }
     else
     {
-       hasPendingMove=true;
-       fromRow=selectedRow;
-       fromCol=selectedCol;
-       toRow=row;
-       toCol=col;
-       selectedRow = -1;
-       selectedCol = -1;
+        hasPendingMove = true;
+        fromRow = selectedRow;
+        fromCol = selectedCol;
+        toRow = row;
+        toCol = col;
+
+        selectedRow = -1;
+        selectedCol = -1;
     }
 }
 
