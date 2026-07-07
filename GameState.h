@@ -9,6 +9,7 @@ class GameState
     private:
     Board board;
     
+    bool gameOver = false;
     int selectedRow = -1;
     int selectedCol = -1;
     

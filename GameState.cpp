@@ -9,6 +9,9 @@ GameState::GameState(const Board& board)
 
 void GameState::handleClick(int x, int y)
 {
+    if (gameOver)
+        return;
+
     if (hasPendingMove)
         return;
 
@@ -117,7 +120,8 @@ void GameState::wait(int ms)
         return;
     
     std::string piece = board.getPiece(fromRow, fromCol);
-    
+    std::string destination = board.getPiece(toRow, toCol);
+
     if (piece != ".")
     {
         board.setPiece(toRow, toCol, piece);
@@ -133,6 +137,12 @@ void GameState::wait(int ms)
     fromCol = -1;
     toRow = -1;
     toCol = -1;
+
+    if (destination == "wK" || destination == "bK")
+    {
+        gameOver = true;
+    }
+    
 }
 
 void GameState::printBoard() const
