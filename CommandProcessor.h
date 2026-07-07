@@ -3,12 +3,13 @@
 
 #include "GameState.h"
 
-class CommandProcessor {
+class CommandProcessor
+{
 private:
     GameState& game;
 
 public:
-    CommandProcessor(GameState& g);
+    CommandProcessor(GameState& game);
 
     void run();
 };
