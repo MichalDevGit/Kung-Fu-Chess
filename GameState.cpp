@@ -49,7 +49,7 @@ void GameState::handleClick(int x, int y)
         {
             return;
         }
-        
+
         hasPendingMove = true;
         fromRow = selectedRow;
         fromCol = selectedCol;
@@ -92,12 +92,55 @@ void GameState::printBoard() const
 }
 
 
+
+bool GameState::isPathClear(int fromRow,
+    int fromCol,
+    int toRow,
+    int toCol) const
+    {
+        int rowStep = 0;
+        int colStep = 0;
+        
+        if (toRow > fromRow)
+        rowStep = 1;
+    else if (toRow < fromRow)
+    rowStep = -1;
+
+if (toCol > fromCol)
+colStep = 1;
+else if (toCol < fromCol)
+colStep = -1;
+
+int row = fromRow + rowStep;
+int col = fromCol + colStep;
+
+while (row != toRow || col != toCol)
+{
+    if (board.getPiece(row, col) != ".")
+    return false;
+
+row += rowStep;
+col += colStep;
+}
+
+return true;
+}
+
 bool GameState::isLegalMove(const std::string& piece,
     int fromRow,
     int fromCol,
     int toRow,
     int toCol) const
 {
+
+    std::string destination = board.getPiece(toRow, toCol);
+
+    if (destination != "." &&
+        destination[0] == piece[0])
+    {
+        return false;
+    }
+
     int dr = std::abs(toRow - fromRow);
     int dc = std::abs(toCol - fromCol);
 
@@ -107,16 +150,26 @@ bool GameState::isLegalMove(const std::string& piece,
         return dr <= 1 && dc <= 1 && (dr != 0 || dc != 0);
 
         case 'R':
-        return (dr == 0 && dc > 0) ||
-        (dc == 0 && dr > 0);
+        return ((dr == 0 && dc > 0) ||
+        (dc == 0 && dr > 0))
+        && isPathClear(fromRow, fromCol,
+                       toRow, toCol);
 
         case 'B':
-        return dr == dc && dr > 0;
+        return dr == dc &&
+        dr > 0 &&
+        isPathClear(fromRow, fromCol,
+                   toRow, toCol);
 
         case 'Q':
-        return (dr == dc && dr > 0) ||
-        (dr == 0 && dc > 0) ||
-        (dc == 0 && dr > 0);
+        return (
+            (dr == dc && dr > 0) ||
+            (dr == 0 && dc > 0) ||
+            (dc == 0 && dr > 0)
+            )
+            &&
+            isPathClear(fromRow, fromCol,
+                        toRow, toCol);
 
         case 'N':
         return (dr == 2 && dc == 1) ||

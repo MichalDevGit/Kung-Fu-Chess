@@ -36,6 +36,11 @@ public:
         int fromCol,
         int toRow,
         int toCol) const;
+
+        bool isPathClear(int fromRow,
+            int fromCol,
+            int toRow,
+            int toCol) const;
 };
 
 #endif
