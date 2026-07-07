@@ -41,6 +41,12 @@ public:
             int fromCol,
             int toRow,
             int toCol) const;
+
+        bool isPawnMove(const std::string& piece,
+            int fromRow,
+            int fromCol,
+            int toRow,
+            int toCol) const;
 };
 
 #endif
