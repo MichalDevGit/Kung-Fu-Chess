@@ -30,6 +30,12 @@ public:
     void wait(int ms);
 
     void printBoard() const;
+
+    bool isLegalMove(const std::string& piece,
+        int fromRow,
+        int fromCol,
+        int toRow,
+        int toCol) const;
 };
 
 #endif

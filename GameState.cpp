@@ -1,5 +1,6 @@
 #include "GameState.h"
 #include <string>
+#include <cmath>
 
 GameState::GameState(const Board& board)
     : board(board)
@@ -40,6 +41,15 @@ void GameState::handleClick(int x, int y)
     }
     else
     {
+        if (!isLegalMove(selectedPiece,
+            selectedRow,
+            selectedCol,
+            row,
+            col))
+        {
+            return;
+        }
+        
         hasPendingMove = true;
         fromRow = selectedRow;
         fromCol = selectedCol;
@@ -79,4 +89,40 @@ void GameState::wait(int ms)
 void GameState::printBoard() const
 {
     board.print();
+}
+
+
+bool GameState::isLegalMove(const std::string& piece,
+    int fromRow,
+    int fromCol,
+    int toRow,
+    int toCol) const
+{
+    int dr = std::abs(toRow - fromRow);
+    int dc = std::abs(toCol - fromCol);
+
+    switch (piece[1])
+    {
+        case 'K':
+        return dr <= 1 && dc <= 1 && (dr != 0 || dc != 0);
+
+        case 'R':
+        return (dr == 0 && dc > 0) ||
+        (dc == 0 && dr > 0);
+
+        case 'B':
+        return dr == dc && dr > 0;
+
+        case 'Q':
+        return (dr == dc && dr > 0) ||
+        (dr == 0 && dc > 0) ||
+        (dc == 0 && dr > 0);
+
+        case 'N':
+        return (dr == 2 && dc == 1) ||
+        (dr == 1 && dc == 2);
+
+        default:
+        return false;
+    }
 }
