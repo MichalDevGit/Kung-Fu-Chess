@@ -41,5 +41,17 @@ void CommandProcessor::run()
 
             game.wait(milliseconds);
         }
+        else if (line.rfind("jump", 0) == 0)
+        {
+            std::stringstream ss(line);
+        
+            std::string command;
+            int x;
+            int y;
+        
+            ss >> command >> x >> y;
+        
+            game.jump(x, y);
+        }
     }
 }

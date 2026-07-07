@@ -12,16 +12,26 @@ void GameState::handleClick(int x, int y)
     if (gameOver)
         return;
 
-    if (hasPendingMove)
-        return;
-
     int row = y / 100;
     int col = x / 100;
-
+    
     if (!board.isValidPosition(row, col))
-        return;
+    return;
 
     std::string piece = board.getPiece(row, col);
+
+    if (isAirborne &&
+        piece != "." &&
+        piece[0] != board.getPiece(airborneRow, airborneCol)[0] &&
+        row == airborneRow &&
+        col == airborneCol)
+        {
+            board.setPiece(row, col, ".");
+            return;
+        }
+    
+    if (hasPendingMove && !isAirborne)
+        return;
 
     if (selectedRow == -1)
     {
@@ -30,10 +40,10 @@ void GameState::handleClick(int x, int y)
             selectedRow = row;
             selectedCol = col;
         }
-
+        
         return;
     }
-
+    
     std::string selectedPiece = board.getPiece(selectedRow, selectedCol);
 
     if (piece != "." &&
@@ -118,6 +128,17 @@ void GameState::wait(int ms)
     
     if (gameClock < moveFinishTime)
         return;
+
+    if (isAirborne)
+    {
+        isAirborne = false;
+        hasPendingMove = false;
+        moveFinishTime = 0;
+        
+        airborneRow = -1;
+        airborneCol = -1;
+        return;
+    }
     
     std::string piece = board.getPiece(fromRow, fromCol);
     std::string destination = board.getPiece(toRow, toCol);
@@ -322,4 +343,33 @@ bool GameState::isLegalMove(const std::string& piece,
         default:
         return false;
     }
+}
+
+void GameState::jump(int x, int y)
+{
+    if (gameOver)
+        return;
+
+    if (hasPendingMove)
+        return;
+
+    int row = y / 100;
+    int col = x / 100;
+
+    if (!board.isValidPosition(row, col))
+        return;
+
+    if (board.getPiece(row, col) == ".")
+        return;
+
+    isAirborne = true;
+
+    airborneRow = row;
+    airborneCol = col;
+
+    hasPendingMove = true;
+    moveFinishTime = gameClock + 1000;
+
+    selectedRow = -1;
+    selectedCol = -1;
 }
