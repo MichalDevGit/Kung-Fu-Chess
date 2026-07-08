@@ -15,7 +15,6 @@ class GameState
     
     long long gameClock = 0;
     
-    bool hasPendingMove = false;
     bool isAirborne = false;
     std::string airbornePiece;
 
@@ -25,7 +24,12 @@ class GameState
     int airborneCol = -1;
 
     static const int MOVE_DURATION = 1000;
+
+    bool hasPendingMove = false;
+    bool hasPendingJump = false;
+    
     long long moveFinishTime = 0;
+    long long jumpFinishTime = 0;
 
     int fromRow = -1;
     int fromCol = -1;
