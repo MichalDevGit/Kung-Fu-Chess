@@ -5,6 +5,7 @@
 #include "Board.h"
 #include "GameState.h"
 #include "CommandProcessor.h"
+#include "Piece.h"
 
 bool isValidToken(const std::string& token)
 {
@@ -30,7 +31,7 @@ bool isValidToken(const std::string& token)
 
 int main()
 {
-    std::vector<std::vector<std::string>> grid;
+    std::vector<std::vector<Piece>> grid;
 
     std::string line;
     size_t expectedCols = 0;
@@ -46,7 +47,7 @@ int main()
         std::stringstream ss(line);
 
         std::string token;
-        std::vector<std::string> row;
+        std::vector<Piece> row;
 
         while (ss >> token)
         {
@@ -56,7 +57,7 @@ int main()
                 return 0;
             }
 
-            row.push_back(token);
+            row.emplace_back(token);
         }
 
         if (!row.empty())
