@@ -2,9 +2,27 @@
 #include <string>
 #include <cmath>
 
+
 GameState::GameState(const Board& board)
     : board(board)
 {
+}
+
+void GameState::clearSelection()
+{
+    selectedRow = -1;
+    selectedCol = -1;
+}
+
+void GameState::selectPiece(int row, int col)
+{
+    selectedRow = row;
+    selectedCol = col;
+}
+
+bool GameState::hasSelectedPiece() const
+{
+    return selectedRow != -1;
 }
 
 void GameState::handleClick(int x, int y)
@@ -33,14 +51,13 @@ void GameState::handleClick(int x, int y)
     if (hasPendingMove)
         return;
 
-    if (selectedRow == -1)
+    if (!hasSelectedPiece())
     {
         if (!piece.isEmpty())
         {
-            selectedRow = row;
-            selectedCol = col;
+            selectPiece(row, col);
         }
-        
+
         return;
     }
     
@@ -49,8 +66,7 @@ void GameState::handleClick(int x, int y)
     if (!piece.isEmpty() &&
         piece.getColor() == selectedPiece.getColor())
     {
-        selectedRow = row;
-        selectedCol = col;
+        selectPiece(row, col);
     }
     else
     {
@@ -77,8 +93,7 @@ void GameState::handleClick(int x, int y)
         toRow = row;
         toCol = col;
         movingPiece = selectedPiece;
-        selectedRow = -1;
-        selectedCol = -1;
+        clearSelection();
     }
 }
 
@@ -168,8 +183,7 @@ void GameState::wait(int ms)
         toRow = -1;
         toCol = -1;
 
-        selectedRow = -1;
-        selectedCol = -1;
+        clearSelection();
     }
 
         // סיום קפיצה
@@ -382,6 +396,5 @@ void GameState::jump(int x, int y)
     hasPendingJump = true;
     jumpFinishTime = gameClock + MOVE_DURATION;
 
-    selectedRow = -1;
-    selectedCol = -1;
+    clearSelection();
 }

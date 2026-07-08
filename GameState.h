@@ -37,6 +37,12 @@ class GameState
     int toRow = -1;
     int toCol = -1;
 
+    void clearSelection();
+
+    void selectPiece(int row, int col);
+    
+    bool hasSelectedPiece() const;
+
     bool isLegalMove(const Piece& piece,
         int fromRow,
         int fromCol,
@@ -62,7 +68,6 @@ class GameState
             int fromCol,
             int toRow,
             int toCol) const;
-
 
 public:
 
