@@ -16,9 +16,9 @@ class GameState
     long long gameClock = 0;
     
     bool isAirborne = false;
-    std::string airbornePiece;
+    Piece airbornePiece;
 
-    std::string movingPiece;
+    Piece movingPiece;
 
     int airborneRow = -1;
     int airborneCol = -1;
@@ -36,30 +36,36 @@ class GameState
     
     int toRow = -1;
     int toCol = -1;
-    bool isLegalMove(const std::string& piece,
+
+    bool isLegalMove(const Piece& piece,
         int fromRow,
         int fromCol,
         int toRow,
         int toCol) const;
+    
     
     bool isPathClear(int fromRow,
             int fromCol,
             int toRow,
             int toCol) const;
     
-    bool isPawnMove(const std::string& piece,
+    
+    bool isPawnMove(const Piece& piece,
             int fromRow,
             int fromCol,
             int toRow,
             int toCol) const;
     
-    int getMoveDistance(const std::string& piece,
+    
+    int getMoveDistance(const Piece& piece,
             int fromRow,
             int fromCol,
             int toRow,
             int toCol) const;
 
+
 public:
+
     GameState(const Board& b);
 
     void handleClick(int x, int y);

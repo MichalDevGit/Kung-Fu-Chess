@@ -26,8 +26,6 @@ public:
 
     void setValue(const std::string& value);
 
-    std::string getValue() const
-
     bool operator==(const Piece& other) const;
 
     bool operator!=(const Piece& other) const;

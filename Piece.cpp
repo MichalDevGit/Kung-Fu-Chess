@@ -10,7 +10,7 @@ Piece::Piece(const std::string& value)
 {
 }
 
-std::string Piece::getValue() const
+std::string Piece::toString() const
 {
     return value;
 }

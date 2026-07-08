@@ -18,15 +18,15 @@ void GameState::handleClick(int x, int y)
     if (!board.isValidPosition(row, col))
     return;
 
-    std::string piece = board.getPiece(row, col);
+    Piece piece = board.getPiece(row, col);
 
     if (isAirborne &&
-        piece != "." &&
-        piece[0] != airbornePiece[0] &&
+        !piece.isEmpty() &&
+        piece.getColor() != airbornePiece.getColor() &&
         row == airborneRow &&
         col == airborneCol)
         {
-            board.setPiece(row, col, ".");
+            board.setPiece(row, col, Piece("."));
             return;
         }
     
@@ -35,7 +35,7 @@ void GameState::handleClick(int x, int y)
 
     if (selectedRow == -1)
     {
-        if (piece != ".")
+        if (!piece.isEmpty())
         {
             selectedRow = row;
             selectedCol = col;
@@ -44,10 +44,10 @@ void GameState::handleClick(int x, int y)
         return;
     }
     
-    std::string selectedPiece = board.getPiece(selectedRow, selectedCol);
+    Piece selectedPiece = board.getPiece(selectedRow, selectedCol);
 
-    if (piece != "." &&
-        piece[0] == selectedPiece[0])
+    if (!piece.isEmpty() &&
+        piece.getColor() == selectedPiece.getColor())
     {
         selectedRow = row;
         selectedCol = col;
@@ -82,7 +82,7 @@ void GameState::handleClick(int x, int y)
     }
 }
 
-int GameState::getMoveDistance(const std::string& piece,
+int GameState::getMoveDistance(const Piece& piece,
     int fromRow,
     int fromCol,
     int toRow,
@@ -91,7 +91,7 @@ int GameState::getMoveDistance(const std::string& piece,
     int dr = std::abs(toRow - fromRow);
     int dc = std::abs(toCol - fromCol);
 
-    switch (piece[1])
+    switch (piece.getType())
     {
         case 'R':
             return dr + dc;
@@ -125,34 +125,34 @@ void GameState::wait(int ms)
 
     if (hasPendingMove && gameClock >= moveFinishTime)
     {
-        std::string piece = movingPiece;
-        std::string destination = board.getPiece(toRow, toCol);
+        Piece piece = movingPiece;
+        Piece destination = board.getPiece(toRow, toCol);
 
         // אם יש כלי קופץ עדיין באוויר על משבצת היעד,
         // והוא אויב - הכלי המגיע נתפס.
         if (isAirborne &&
             toRow == airborneRow &&
             toCol == airborneCol &&
-            piece[0] != airbornePiece[0])
+            piece.getColor() != airbornePiece.getColor())
         {
-            board.setPiece(fromRow, fromCol, ".");
+            board.setPiece(fromRow, fromCol, Piece("."));
         }
         else
         {
             board.setPiece(toRow, toCol, piece);
-            board.setPiece(fromRow, fromCol, ".");
+            board.setPiece(fromRow, fromCol, Piece("."));
 
-            if (piece == "wP" && toRow == 0)
+            if (piece == Piece("wP") && toRow == 0)
             {
-                board.setPiece(toRow, toCol, "wQ");
+                board.setPiece(toRow, toCol, Piece("wQ"));
             }
 
-            if (piece == "bP" && toRow == board.getRows() - 1)
+            if (piece == Piece("bP") && toRow == board.getRows() - 1)
             {
-                board.setPiece(toRow, toCol, "bQ");
+                board.setPiece(toRow, toCol, Piece("bQ"));
             }
 
-            if (destination == "wK" || destination == "bK")
+            if (destination == Piece("wK") || destination == Piece("bK"))
             {
                 gameOver = true;
             }
@@ -161,7 +161,7 @@ void GameState::wait(int ms)
         hasPendingMove = false;
         moveFinishTime = 0;
 
-        movingPiece = "";
+        movingPiece = Piece();
 
         fromRow = -1;
         fromCol = -1;
@@ -182,7 +182,7 @@ void GameState::wait(int ms)
         isAirborne = false;
         airborneRow = -1;
         airborneCol = -1;
-        airbornePiece = "";
+        airbornePiece = Piece();
     }
 
 }
@@ -196,7 +196,7 @@ bool GameState::isPathClear(int fromRow,
     int fromCol,
     int toRow,
     int toCol) const
-    {
+{
         int rowStep = 0;
         int colStep = 0;
         
@@ -215,8 +215,8 @@ bool GameState::isPathClear(int fromRow,
 
         while (row != toRow || col != toCol)
         {
-            if (board.getPiece(row, col) != ".")
-            return false;
+            if (!board.getPiece(row, col).isEmpty())
+                return false;
 
             row += rowStep;
             col += colStep;
@@ -225,20 +225,20 @@ bool GameState::isPathClear(int fromRow,
         return true;
 }
 
-bool GameState::isPawnMove(const std::string& piece,
+bool GameState::isPawnMove(const Piece& piece,
     int fromRow,
     int fromCol,
     int toRow,
     int toCol) const
 {
-    std::string destination = board.getPiece(toRow, toCol);
+    Piece destination = board.getPiece(toRow, toCol);
 
-    if (piece[0] == 'w')
+    if (piece.getColor() == 'w')
     {
         // move forward one cell
         if (toCol == fromCol &&
             toRow == fromRow - 1 &&
-            destination == ".")
+            destination.isEmpty())
         {
             return true;
         }
@@ -247,8 +247,8 @@ bool GameState::isPawnMove(const std::string& piece,
         if (fromRow == board.getRows() - 1 &&
             toCol == fromCol &&
             toRow == fromRow - 2 &&
-            board.getPiece(fromRow - 1, fromCol) == "." &&
-            destination == ".")
+            board.getPiece(fromRow - 1, fromCol).isEmpty() &&
+            destination.isEmpty())
         {
             return true;
         }
@@ -256,8 +256,8 @@ bool GameState::isPawnMove(const std::string& piece,
         // capture
         if (toRow == fromRow - 1 &&
             std::abs(toCol - fromCol) == 1 &&
-            destination != "." &&
-            destination[0] == 'b')
+            !destination.isEmpty() &&
+            destination.getColor() == 'b')
         {
             return true;
         }
@@ -267,7 +267,7 @@ bool GameState::isPawnMove(const std::string& piece,
         // move forward one cell
         if (toCol == fromCol &&
             toRow == fromRow + 1 &&
-            destination == ".")
+            destination.isEmpty())
         {
             return true;
         }
@@ -276,8 +276,8 @@ bool GameState::isPawnMove(const std::string& piece,
         if (fromRow == 0 &&
             toCol == fromCol &&
             toRow == fromRow + 2 &&
-            board.getPiece(fromRow + 1, fromCol) == "." &&
-            destination == ".")
+            board.getPiece(fromRow + 1, fromCol).isEmpty() &&
+            destination.isEmpty())
         {
             return true;
         }
@@ -285,8 +285,8 @@ bool GameState::isPawnMove(const std::string& piece,
         // capture
         if (toRow == fromRow + 1 &&
             std::abs(toCol - fromCol) == 1 &&
-            destination != "." &&
-            destination[0] == 'w')
+            !destination.isEmpty() &&
+            destination.getColor() == 'w')
         {
             return true;
         }
@@ -295,17 +295,17 @@ bool GameState::isPawnMove(const std::string& piece,
     return false;
 }
 
-bool GameState::isLegalMove(const std::string& piece,
+bool GameState::isLegalMove(const Piece& piece,
     int fromRow,
     int fromCol,
     int toRow,
     int toCol) const 
 {
 
-    std::string destination = board.getPiece(toRow, toCol);
+    Piece destination = board.getPiece(toRow, toCol);
 
-    if (destination != "." &&
-        destination[0] == piece[0])
+    if (!destination.isEmpty() &&
+        destination.getColor()== piece.getColor())
     {
         return false;
     }
@@ -313,7 +313,7 @@ bool GameState::isLegalMove(const std::string& piece,
     int dr = std::abs(toRow - fromRow);
     int dc = std::abs(toCol - fromCol);
 
-    switch (piece[1])
+    switch (piece.getType())
     {
         case 'K':
             return dr <= 1 && dc <= 1 && (dr != 0 || dc != 0);
@@ -370,7 +370,7 @@ void GameState::jump(int x, int y)
     if (!board.isValidPosition(row, col))
         return;
 
-    if (board.getPiece(row, col) == ".")
+    if (board.getPiece(row, col).isEmpty())
         return;
 
     isAirborne = true;
