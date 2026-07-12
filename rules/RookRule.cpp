@@ -1,7 +1,8 @@
 #include "RookRule.h"
+
 #include <cmath>
 
-bool RookRule::isLegalMove(
+MoveValidation RookRule::isLegalMove(
     const Board& board,
     const Piece& piece,
     const Position& to) const
@@ -14,28 +15,56 @@ bool RookRule::isLegalMove(
     // חייב לזוז
     if (dr == 0 && dc == 0)
     {
-        return false;
+        return { false, MoveValidationReason::IllegalMovement };
     }
 
-    // רק אופקי או אנכי
+    // צריח נע רק אופקית או אנכית
     if (dr != 0 && dc != 0)
     {
-        return false;
+        return { false, MoveValidationReason::IllegalMovement };
     }
 
-    // חסימות בדרך
+    // הנתיב חייב להיות פנוי
     if (!isPathClear(board, from, to))
     {
-        return false;
+        return { false, MoveValidationReason::PathBlocked };
     }
 
-    const Piece* destination = board.getPiece(to);
+    return { true, MoveValidationReason::Valid };
+}
 
-    // יש כלי מאותו צבע
-    if (destination != nullptr &&
-        destination->getColor() == piece.getColor())
+bool RookRule::isPathClear(
+    const Board& board,
+    const Position& from,
+    const Position& to) const
+{
+    int rowStep = 0;
+    int colStep = 0;
+
+    if (to.getRow() > from.getRow())
+        rowStep = 1;
+    else if (to.getRow() < from.getRow())
+        rowStep = -1;
+
+    if (to.getCol() > from.getCol())
+        colStep = 1;
+    else if (to.getCol() < from.getCol())
+        colStep = -1;
+
+    Position current(
+        from.getRow() + rowStep,
+        from.getCol() + colStep);
+
+    while (current != to)
     {
-        return false;
+        if (board.containsPiece(current))
+        {
+            return false;
+        }
+
+        current.setPosition(
+            current.getRow() + rowStep,
+            current.getCol() + colStep);
     }
 
     return true;

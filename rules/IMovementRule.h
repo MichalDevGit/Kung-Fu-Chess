@@ -4,13 +4,14 @@
 #include "../Model/Board.h"
 #include "../Model/Piece.h"
 #include "../Model/Position.h"
+#include "../Common/MoveValidation.h"
 
 class IMovementRule
 {
 public:
     virtual ~IMovementRule() = default;
 
-    virtual bool isLegalMove(
+    virtual MoveValidation isLegalMove(
         const Board& board,
         const Piece& piece,
         const Position& to) const = 0;

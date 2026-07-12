@@ -6,7 +6,7 @@
 class RookRule : public IMovementRule
 {
 public:
-    bool isLegalMove(
+    MoveValidation isLegalMove(
         const Board& board,
         const Piece& piece,
         const Position& to) const override;
