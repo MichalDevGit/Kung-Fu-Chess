@@ -2,28 +2,38 @@
 #define BOARD_H
 
 #include <vector>
+
 #include "Piece.h"
+#include "Position.h"
 
 class Board
 {
 private:
-    std::vector<Piece> pieces;
     int rows;
     int cols;
 
+    std::vector<Piece> pieces;
+
 public:
-    Board(const std::vector<std::vector<Piece>>& grid);
+    Board(int rows, int cols);
 
     int getRows() const;
     int getCols() const;
 
-    bool isValidPosition(int row, int col) const;
+    bool isValidPosition(const Position& position) const;
 
-    Piece getPiece(int row, int col) const;
+    Piece* getPiece(const Position& position);
+    const Piece* getPiece(const Position& position) const;
 
-    void setPiece(int row, int col, const Piece& piece);
+    void addPiece(const Piece& piece);
 
-    void print() const;
+    void removePiece(const Position& position);
+
+    void movePiece(const Position& from,
+                   const Position& to);
+
+    const std::vector<Piece>& getPieces() const;
+    bool containsPiece(const Position& position) const;
 };
 
 #endif

@@ -1,59 +1,88 @@
 #include "Board.h"
 
-#include <iostream>
-
-Board::Board(const std::vector<std::vector<Piece>>& grid)
-    : grid(grid)
+Board::Board(int rows, int cols)
+    : rows(rows),
+      cols(cols)
 {
 }
 
 int Board::getRows() const
 {
-    return static_cast<int>(grid.size());
+    return rows;
 }
 
 int Board::getCols() const
 {
-    if (grid.empty())
-        return 0;
-
-    return grid[0].size();
+    return cols;
 }
 
-bool Board::isValidPosition(int row, int col) const
+bool Board::isValidPosition(const Position& position) const
 {
-    return row >= 0 &&
-           row < getRows() &&
-           col >= 0 &&
-           col < getCols();
+    return position.getRow() >= 0 &&
+           position.getRow() < rows &&
+           position.getCol() >= 0 &&
+           position.getCol() < cols;
 }
 
-Piece Board::getPiece(int row, int col) const
+Piece* Board::getPiece(const Position& position)
 {
-    if (!isValidPosition(row, col))
-        return Piece();
-
-    return grid[row][col];
-}
-
-void Board::setPiece(int row, int col, const Piece& piece)
-{
-    if (isValidPosition(row, col))
-        grid[row][col] = piece;
-}
-
-void Board::print() const
-{
-    for (int i = 0; i < getRows(); i++)
+    for (Piece& piece : pieces)
     {
-        for (int j = 0; j < getCols(); j++)
+        if (piece.getPosition() == position)
         {
-            std::cout << grid[i][j].toString();
-
-            if (j + 1 < getCols())
-                std::cout << " ";
+            return &piece;
         }
-
-        std::cout << std::endl;
     }
+
+    return nullptr;
+}
+
+const Piece* Board::getPiece(const Position& position) const
+{
+    for (const Piece& piece : pieces)
+    {
+        if (piece.getPosition() == position)
+        {
+            return &piece;
+        }
+    }
+
+    return nullptr;
+}
+
+void Board::addPiece(const Piece& piece)
+{
+    pieces.push_back(piece);
+}
+
+void Board::removePiece(const Position& position)
+{
+    for (auto it = pieces.begin(); it != pieces.end(); ++it)
+    {
+        if (it->getPosition() == position)
+        {
+            pieces.erase(it);
+            return;
+        }
+    }
+}
+
+void Board::movePiece(const Position& from,
+                      const Position& to)
+{
+    Piece* piece = getPiece(from);
+
+    if (piece != nullptr)
+    {
+        piece->setPosition(to);
+    }
+}
+
+const std::vector<Piece>& Board::getPieces() const
+{
+    return pieces;
+}
+
+bool Board::containsPiece(const Position& position) const{
+    return getPiece(position) != nullptr;
 }
