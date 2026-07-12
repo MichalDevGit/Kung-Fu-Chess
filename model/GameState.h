@@ -2,85 +2,33 @@
 #define GAMESTATE_H
 
 #include "Board.h"
-#include <string>
+#include "Position.h"
 
 class GameState
 {
-    private:
+private:
     Board board;
-    
-    bool gameOver = false;
-    int selectedRow = -1;
-    int selectedCol = -1;
-    
-    long long gameClock = 0;
-    
-    bool isAirborne = false;
-    Piece airbornePiece;
 
-    Piece movingPiece;
+    bool gameOver;
+    bool hasSelection;
 
-    int airborneRow = -1;
-    int airborneCol = -1;
-
-    static const int MOVE_DURATION = 1000;
-
-    bool hasPendingMove = false;
-    bool hasPendingJump = false;
-    
-    long long moveFinishTime = 0;
-    long long jumpFinishTime = 0;
-
-    int fromRow = -1;
-    int fromCol = -1;
-    
-    int toRow = -1;
-    int toCol = -1;
-
-    void clearSelection();
-
-    void selectPiece(int row, int col);
-    
-    bool hasSelectedPiece() const;
-
-    bool isLegalMove(const Piece& piece,
-        int fromRow,
-        int fromCol,
-        int toRow,
-        int toCol) const;
-    
-    
-    bool isPathClear(int fromRow,
-            int fromCol,
-            int toRow,
-            int toCol) const;
-    
-    
-    bool isPawnMove(const Piece& piece,
-            int fromRow,
-            int fromCol,
-            int toRow,
-            int toCol) const;
-    
-    
-    int getMoveDistance(const Piece& piece,
-            int fromRow,
-            int fromCol,
-            int toRow,
-            int toCol) const;
+    Position selectedPosition;
 
 public:
+    GameState(const Board& board);
 
-    GameState(const Board& b);
+    Board& getBoard();
+    const Board& getBoard() const;
 
-    void handleClick(int x, int y);
+    bool isGameOver() const;
+    void setGameOver(bool gameOver);
 
-    void wait(int ms);
+    bool hasSelectedPiece() const;
 
-    void printBoard() const;
+    Position getSelectedPosition() const;
+    void setSelectedPosition(const Position& position);
 
-    void jump(int x, int y);
-
+    void clearSelection();
 };
 
 #endif
