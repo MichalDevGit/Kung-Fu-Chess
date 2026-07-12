@@ -7,7 +7,9 @@
 class Board
 {
 private:
-    std::vector<std::vector<Piece>> grid;
+    std::vector<Piece> pieces;
+    int rows;
+    int cols;
 
 public:
     Board(const std::vector<std::vector<Piece>>& grid);
