@@ -3,6 +3,16 @@
 #include "../Model/Piece.h"
 #include "../common/enums/PieceType.h"
 
+RuleEngine::RuleEngine()
+{
+    rulesByType[PieceType::Bishop] = &bishopRule;
+    rulesByType[PieceType::King] = &kingRule;
+    rulesByType[PieceType::Knight] = &knightRule;
+    rulesByType[PieceType::Pawn] = &pawnRule;
+    rulesByType[PieceType::Queen] = &queenRule;
+    rulesByType[PieceType::Rook] = &rookRule;
+}
+
 MoveValidation RuleEngine::validateMove(
     const Board& board,
     const Position& from,
@@ -17,27 +27,22 @@ MoveValidation RuleEngine::validateMove(
             MoveValidationReason::SourceEmpty);
     }
 
-    switch (piece->getType())
+    auto ruleIt = rulesByType.find(piece->getType());
+    if (ruleIt == rulesByType.end())
     {
-        case PieceType::Rook:
-        {
-            auto legalMoves =
-                rookRule.legalDestinations(board, *piece);
+        return MoveValidation(
+            false,
+            MoveValidationReason::IllegalMovement);
+    }
 
-            if (legalMoves.count(to) > 0)
-            {
-                return MoveValidation(
-                    true,
-                    MoveValidationReason::Valid);
-            }
+    std::set<Position> legalMoves =
+        ruleIt->second->legalDestinations(board, *piece);
 
-            break;
-        }
-
-        default:
-            return MoveValidation(
-                false,
-                MoveValidationReason::IllegalMovement);
+    if (legalMoves.count(to) > 0)
+    {
+        return MoveValidation(
+            true,
+            MoveValidationReason::Valid);
     }
 
     return MoveValidation(
