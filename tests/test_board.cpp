@@ -1,6 +1,6 @@
 #include "doctest.h"
 
-#include "../Board.h"
+#include "..\model\Board.h"
 
 TEST_CASE("Board dimensions")
 {

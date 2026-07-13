@@ -4,12 +4,14 @@
 #include "../Model/GameState.h"
 #include "../Rules/RuleEngine.h"
 #include "../common/DTO/MoveValidation.h"
+#include "RealTimeArbiter.h"
 
 class GameEngine
 {
 private:
     GameState gameState;
     RuleEngine ruleEngine;
+    RealTimeArbiter arbiter;
     Board& getBoard();
     const Board& getBoard() const;
 
@@ -20,9 +22,7 @@ public:
         const Position& from,
         const Position& to);
 
-    void executeMove(
-        const Position& from,
-        const Position& to);
+    void executeMove(const Motion& motion);
         
     const GameState& getGameState() const;
 

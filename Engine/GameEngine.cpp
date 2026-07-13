@@ -17,7 +17,12 @@ MoveValidation GameEngine::requestMove(
         return validation;
     }
 
-    executeMove(from, to);
+    Motion motion(from, to);
+    arbiter.startMotion(motion);
+
+    executeMove(motion);
+
+    arbiter.finishMotion();
 
     return validation;
 }
@@ -32,11 +37,11 @@ bool GameEngine::hasPieceAt(const Position& position) const
     return getBoard().containsPiece(position);
 }
 
-void GameEngine::executeMove(
-    const Position& from,
-    const Position& to)
+void GameEngine::executeMove(const Motion& motion)
 {
-    getBoard().movePiece(from, to);
+    getBoard().movePiece(
+        motion.getFrom(),
+        motion.getTo());
 }
 
 Board& GameEngine::getBoard()

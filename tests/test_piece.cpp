@@ -1,6 +1,6 @@
 #include "doctest.h"
 
-#include "../Piece.h"
+#include "..\model\Piece.h"
 
 TEST_CASE("Default constructor creates empty piece")
 {
