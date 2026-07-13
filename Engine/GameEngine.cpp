@@ -5,7 +5,7 @@ GameEngine::GameEngine(const GameState& gameState)
 {
 }
 
-MoveValidation GameEngine::move(
+MoveValidation GameEngine::requestMove(
     const Position& from,
     const Position& to)
 {
@@ -28,4 +28,9 @@ MoveValidation GameEngine::move(
 const GameState& GameEngine::getGameState() const
 {
     return gameState;
+}
+
+bool GameEngine::hasPieceAt(const Position& position) const
+{
+    return gameState.getBoard().containsPiece(position);
 }

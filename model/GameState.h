@@ -10,9 +10,6 @@ private:
     Board board;
 
     bool gameOver;
-    bool hasSelection;
-
-    Position selectedPosition;
 
 public:
     GameState(const Board& board);
@@ -23,12 +20,7 @@ public:
     bool isGameOver() const;
     void setGameOver(bool gameOver);
 
-    bool hasSelectedPiece() const;
 
-    Position getSelectedPosition() const;
-    void setSelectedPosition(const Position& position);
-
-    void clearSelection();
 };
 
 #endif

@@ -16,11 +16,13 @@ private:
 public:
     GameEngine(const GameState& gameState);
 
-    MoveValidation move(
+    MoveValidation requestMove(
         const Position& from,
         const Position& to);
 
     const GameState& getGameState() const;
+
+    bool hasPieceAt(const Position& position) const;
 };
 
 #endif

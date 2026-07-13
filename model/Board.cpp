@@ -1,4 +1,5 @@
 #include "Board.h"
+#include <stdexcept>
 
 Board::Board(int rows, int cols)
     : rows(rows),
@@ -52,6 +53,16 @@ const Piece* Board::getPiece(const Position& position) const
 
 void Board::addPiece(const Piece& piece)
 {
+    if (!isValidPosition(piece.getPosition()))
+    {
+        throw std::out_of_range("Piece position is outside the board");
+    }
+
+    if (containsPiece(piece.getPosition()))
+    {
+        throw std::invalid_argument("Cell is already occupied");
+    }
+
     pieces.push_back(piece);
 }
 

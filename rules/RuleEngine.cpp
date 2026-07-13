@@ -18,6 +18,14 @@ MoveValidation RuleEngine::validateMove(
     const Position& from,
     const Position& to) const
 {
+    if (!board.isValidPosition(from) ||
+        !board.isValidPosition(to))
+    {
+        return MoveValidation(
+            false,
+            MoveValidationReason::DestinationOutsideBoard);
+    }
+
     const Piece* piece = board.getPiece(from);
 
     if (piece == nullptr)
@@ -27,7 +35,18 @@ MoveValidation RuleEngine::validateMove(
             MoveValidationReason::SourceEmpty);
     }
 
+    const Piece* destinationPiece = board.getPiece(to);
+
+    if (destinationPiece != nullptr &&
+        destinationPiece->getColor() == piece->getColor())
+    {
+        return MoveValidation(
+            false,
+            MoveValidationReason::FriendlyPieceAtDestination);
+    }
+
     auto ruleIt = rulesByType.find(piece->getType());
+
     if (ruleIt == rulesByType.end())
     {
         return MoveValidation(
