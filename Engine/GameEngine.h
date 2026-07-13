@@ -20,6 +20,10 @@ public:
         const Position& from,
         const Position& to);
 
+    void executeMove(
+        const Position& from,
+        const Position& to);
+        
     const GameState& getGameState() const;
 
     bool hasPieceAt(const Position& position) const;
