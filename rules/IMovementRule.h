@@ -1,20 +1,20 @@
 #ifndef IMOVEMENTRULE_H
 #define IMOVEMENTRULE_H
 
+#include <set>
+
 #include "../Model/Board.h"
 #include "../Model/Piece.h"
 #include "../Model/Position.h"
-#include "../Common/MoveValidation.h"
 
 class IMovementRule
 {
 public:
     virtual ~IMovementRule() = default;
 
-    virtual MoveValidation isLegalMove(
+    virtual std::set<Position> legalDestinations(
         const Board& board,
-        const Piece& piece,
-        const Position& to) const = 0;
+        const Piece& piece) const = 0;
 };
 
 #endif

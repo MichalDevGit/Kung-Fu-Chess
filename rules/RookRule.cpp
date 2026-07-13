@@ -1,71 +1,52 @@
 #include "RookRule.h"
 
-#include <cmath>
-
-MoveValidation RookRule::isLegalMove(
+std::set<Position> RookRule::legalDestinations(
     const Board& board,
-    const Piece& piece,
-    const Position& to) const
+    const Piece& piece) const
 {
-    Position from = piece.getPosition();
+    std::set<Position> destinations;
 
-    int dr = std::abs(to.getRow() - from.getRow());
-    int dc = std::abs(to.getCol() - from.getCol());
+    scanDirection(board, piece, -1,  0, destinations); // למעלה
+    scanDirection(board, piece,  1,  0, destinations); // למטה
+    scanDirection(board, piece,  0, -1, destinations); // שמאלה
+    scanDirection(board, piece,  0,  1, destinations); // ימינה
 
-    // חייב לזוז
-    if (dr == 0 && dc == 0)
-    {
-        return { false, MoveValidationReason::IllegalMovement };
-    }
-
-    // צריח נע רק אופקית או אנכית
-    if (dr != 0 && dc != 0)
-    {
-        return { false, MoveValidationReason::IllegalMovement };
-    }
-
-    // הנתיב חייב להיות פנוי
-    if (!isPathClear(board, from, to))
-    {
-        return { false, MoveValidationReason::PathBlocked };
-    }
-
-    return { true, MoveValidationReason::Valid };
+    return destinations;
 }
 
-bool RookRule::isPathClear(
+void RookRule::scanDirection(
     const Board& board,
-    const Position& from,
-    const Position& to) const
+    const Piece& piece,
+    int rowStep,
+    int colStep,
+    std::set<Position>& destinations) const
 {
-    int rowStep = 0;
-    int colStep = 0;
+    Position current = piece.getPosition();
 
-    if (to.getRow() > from.getRow())
-        rowStep = 1;
-    else if (to.getRow() < from.getRow())
-        rowStep = -1;
+    current.setPosition(
+        current.getRow() + rowStep,
+        current.getCol() + colStep);
 
-    if (to.getCol() > from.getCol())
-        colStep = 1;
-    else if (to.getCol() < from.getCol())
-        colStep = -1;
-
-    Position current(
-        from.getRow() + rowStep,
-        from.getCol() + colStep);
-
-    while (current != to)
+    while (board.isValidPosition(current))
     {
-        if (board.containsPiece(current))
+        const Piece* target = board.getPiece(current);
+
+        if (target == nullptr)
         {
-            return false;
+            destinations.insert(current);
+        }
+        else
+        {
+            if (target->getColor() != piece.getColor())
+            {
+                destinations.insert(current);
+            }
+
+            break;
         }
 
         current.setPosition(
             current.getRow() + rowStep,
             current.getCol() + colStep);
     }
-
-    return true;
 }

@@ -1,21 +1,24 @@
 #ifndef ROOKRULE_H
 #define ROOKRULE_H
 
+#include <set>
+
 #include "IMovementRule.h"
 
 class RookRule : public IMovementRule
 {
 public:
-    MoveValidation isLegalMove(
+    std::set<Position> legalDestinations(
         const Board& board,
-        const Piece& piece,
-        const Position& to) const override;
+        const Piece& piece) const override;
 
 private:
-    bool isPathClear(
+    void scanDirection(
         const Board& board,
-        const Position& from,
-        const Position& to) const;
+        const Piece& piece,
+        int rowStep,
+        int colStep,
+        std::set<Position>& destinations) const;
 };
 
 #endif
