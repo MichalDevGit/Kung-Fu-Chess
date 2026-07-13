@@ -1,7 +1,8 @@
 #include "CommandProcessor.h"
 
 #include <iostream>
-#include <sstream>
+
+#include "IO/BoardPrinter.h"
 
 CommandProcessor::CommandProcessor(GameState& g)
     : game(g)
@@ -16,42 +17,7 @@ void CommandProcessor::run()
     {
         if (line == "print board")
         {
-            game.printBoard();
-        }
-        else if (line.rfind("click", 0) == 0)
-        {
-            std::stringstream ss(line);
-
-            std::string command;
-            int x;
-            int y;
-
-            ss >> command >> x >> y;
-
-            game.handleClick(x, y);
-        }
-        else if (line.rfind("wait", 0) == 0)
-        {
-            std::stringstream ss(line);
-
-            std::string command;
-            int milliseconds;
-
-            ss >> command >> milliseconds;
-
-            game.wait(milliseconds);
-        }
-        else if (line.rfind("jump", 0) == 0)
-        {
-            std::stringstream ss(line);
-        
-            std::string command;
-            int x;
-            int y;
-        
-            ss >> command >> x >> y;
-        
-            game.jump(x, y);
+            std::cout << BoardPrinter::print(game.getBoard()) << std::endl;
         }
     }
 }

@@ -3,7 +3,7 @@
 
 #include <string>
 
-#include "../Model/Board.h"
+#include "../model/Board.h"
 
 class BoardPrinter
 {

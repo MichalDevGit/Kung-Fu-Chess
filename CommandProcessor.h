@@ -1,7 +1,7 @@
 #ifndef COMMANDPROCESSOR_H
 #define COMMANDPROCESSOR_H
 
-#include "GameState.h"
+#include "model/GameState.h"
 
 class CommandProcessor
 {

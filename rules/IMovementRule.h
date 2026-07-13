@@ -3,9 +3,9 @@
 
 #include <set>
 
-#include "../Model/Board.h"
-#include "../Model/Piece.h"
-#include "../Model/Position.h"
+#include "../model/Board.h"
+#include "../model/Piece.h"
+#include "../model/Position.h"
 
 class IMovementRule
 {
