@@ -6,6 +6,7 @@
 class Motion
 {
 public:
+    Motion();
     Motion(
         const Position& from,
         const Position& to);

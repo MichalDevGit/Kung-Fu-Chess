@@ -10,7 +10,7 @@ MoveValidation GameEngine::requestMove(
     const Position& to)
 {
     MoveValidation validation =
-        ruleEngine.validateMove(...);
+        ruleEngine.validateMove(getBoard(),from,to);
 
     if (!validation.isValid)
     {
@@ -29,12 +29,22 @@ const GameState& GameEngine::getGameState() const
 
 bool GameEngine::hasPieceAt(const Position& position) const
 {
-    return gameState.getBoard().containsPiece(position);
+    return getBoard().containsPiece(position);
 }
 
 void GameEngine::executeMove(
     const Position& from,
     const Position& to)
 {
-    gameState.getBoard().movePiece(from, to);
+    getBoard().movePiece(from, to);
+}
+
+Board& GameEngine::getBoard()
+{
+    return gameState.getBoard();
+}
+
+const Board& GameEngine::getBoard() const
+{
+    return gameState.getBoard();
 }

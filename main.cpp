@@ -1,46 +1,17 @@
-#include <iostream>
-
-#include "IO/BoardParser.h"
-#include "IO/BoardPrinter.h"
-
+#include "Model/Board.h"
 #include "Model/GameState.h"
-
 #include "Engine/GameEngine.h"
+#include "Controller/Controller.h"
 
 int main()
 {
-    std::string boardText =
-        "bR . . . . . . . "
-        ". . . . . . . . "
-        ". . . . . . . . "
-        ". . . . . . . . "
-        ". . . . . . . . "
-        ". . . . . . . . "
-        ". . . . . . . . "
-        "wR . . . . . . .";
-
-    Board board = BoardParser::parse(boardText);
+    Board board(8, 8);
 
     GameState gameState(board);
 
     GameEngine engine(gameState);
 
-    std::cout << "Before move:\n";
-    std::cout << BoardPrinter::print(engine.getGameState().getBoard()) << std::endl;
-
-    MoveValidation result =
-        engine.move(
-            Position(7, 0),
-            Position(5, 0));
-
-    std::cout << "\nMove valid: "
-              << (result.isValid ? "true" : "false")
-              << std::endl;
-
-    std::cout << static_cast<int>(result.reason) << std::endl;
-
-    std::cout << "\nAfter move:\n";
-    std::cout << BoardPrinter::print(engine.getGameState().getBoard()) << std::endl;
+    Controller controller(engine);
 
     return 0;
 }
