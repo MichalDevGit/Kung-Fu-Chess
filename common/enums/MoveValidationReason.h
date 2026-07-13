@@ -1,3 +1,6 @@
+#ifndef MOVEVALIDATIONREASON_H
+#define MOVEVALIDATIONREASON_H
+
 enum class MoveValidationReason
 {
     Valid,
@@ -9,3 +12,5 @@ enum class MoveValidationReason
     GameOver,
     MoveAlreadyInProgress
 };
+
+#endif

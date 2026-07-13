@@ -4,9 +4,9 @@
 #include <string>
 
 #include "Position.h"
-#include "PieceColor.h"
-#include "PieceType.h"
-#include "PieceState.h"
+#include "../common/enums/PieceColor.h"
+#include "../common/enums/PieceType.h"
+#include "../common/enums/PieceState.h"
 
 class Piece
 {

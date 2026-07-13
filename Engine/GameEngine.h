@@ -3,7 +3,7 @@
 
 #include "../Model/GameState.h"
 #include "../Rules/RuleEngine.h"
-#include "../Common/MoveValidation.h"
+#include "../common/DTO/MoveValidation.h"
 
 class GameEngine
 {

@@ -1,26 +1,46 @@
-switch (piece->getType())
+#include "RuleEngine.h"
+
+#include "../Model/Piece.h"
+#include "../common/enums/PieceType.h"
+
+MoveValidation RuleEngine::validateMove(
+    const Board& board,
+    const Position& from,
+    const Position& to) const
 {
-    case PieceType::Rook:
+    const Piece* piece = board.getPiece(from);
+
+    if (piece == nullptr)
     {
-        auto legalMoves =
-            rookRule.legalDestinations(board, *piece);
-
-        if (legalMoves.contains(to))
-        {
-            return MoveValidation(
-                true,
-                MoveValidationReason::None);
-        }
-
-        break;
-    }
-
-    default:
         return MoveValidation(
             false,
-            MoveValidationReason::UnsupportedPiece);
-}
+            MoveValidationReason::SourceEmpty);
+    }
 
-return MoveValidation(
-    false,
-    MoveValidationReason::IllegalMove);
+    switch (piece->getType())
+    {
+        case PieceType::Rook:
+        {
+            auto legalMoves =
+                rookRule.legalDestinations(board, *piece);
+
+            if (legalMoves.count(to) > 0)
+            {
+                return MoveValidation(
+                    true,
+                    MoveValidationReason::Valid);
+            }
+
+            break;
+        }
+
+        default:
+            return MoveValidation(
+                false,
+                MoveValidationReason::IllegalMovement);
+    }
+
+    return MoveValidation(
+        false,
+        MoveValidationReason::IllegalMovement);
+}

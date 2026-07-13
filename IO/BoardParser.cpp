@@ -2,6 +2,50 @@
 
 #include <sstream>
 
+namespace
+{
+int nextPieceId = 0;
+
+PieceType parsePieceType(char typeChar)
+{
+    switch (typeChar)
+    {
+        case 'K': return PieceType::King;
+        case 'Q': return PieceType::Queen;
+        case 'R': return PieceType::Rook;
+        case 'B': return PieceType::Bishop;
+        case 'N': return PieceType::Knight;
+        case 'P': return PieceType::Pawn;
+        default:  return PieceType::Empty;
+    }
+}
+
+PieceColor parsePieceColor(char colorChar)
+{
+    switch (colorChar)
+    {
+        case 'w': return PieceColor::White;
+        case 'b': return PieceColor::Black;
+        default:  return PieceColor::None;
+    }
+}
+
+Piece parsePieceFromToken(const std::string& token,
+                          const Position& position)
+{
+    PieceColor color = PieceColor::None;
+    PieceType type = PieceType::Empty;
+
+    if (token != "." && token.size() >= 2)
+    {
+        color = parsePieceColor(token[0]);
+        type = parsePieceType(token[1]);
+    }
+
+    return Piece(nextPieceId++, type, color, position);
+}
+}
+
 Board BoardParser::parse(const std::string& boardText)
 {
     Board board(8, 8);
@@ -17,11 +61,8 @@ Board BoardParser::parse(const std::string& boardText)
     {
         if (token != ".")
         {
-            Piece piece(token);
-
-            piece.setPosition(Position(row, col));
-
-            board.addPiece(piece);
+            board.addPiece(
+                parsePieceFromToken(token, Position(row, col)));
         }
 
         col++;

@@ -1,88 +1,46 @@
 #include <iostream>
-#include <vector>
-#include <sstream>
 
-#include "Board.h"
-#include "GameState.h"
-#include "CommandProcessor.h"
-#include "Piece.h"
+#include "IO/BoardParser.h"
+#include "IO/BoardPrinter.h"
 
-bool isValidToken(const std::string& token)
-{
-    if (token == ".")
-        return true;
+#include "Model/GameState.h"
 
-    if (token.length() != 2)
-        return false;
-
-    bool validColor =
-        token[0] == 'w' || token[0] == 'b';
-
-    bool validPiece =
-        token[1] == 'K' ||
-        token[1] == 'Q' ||
-        token[1] == 'R' ||
-        token[1] == 'B' ||
-        token[1] == 'N' ||
-        token[1] == 'P';
-
-    return validColor && validPiece;
-}
+#include "Engine/GameEngine.h"
 
 int main()
 {
-    std::vector<std::vector<Piece>> grid;
+    std::string boardText =
+        "bR . . . . . . . "
+        ". . . . . . . . "
+        ". . . . . . . . "
+        ". . . . . . . . "
+        ". . . . . . . . "
+        ". . . . . . . . "
+        ". . . . . . . . "
+        "wR . . . . . . .";
 
-    std::string line;
-    size_t expectedCols = 0;
+    Board board = BoardParser::parse(boardText);
 
-    while (std::getline(std::cin, line) && line != "Commands:")
-    {
-        if (line.find("Board:") != std::string::npos)
-            continue;
+    GameState gameState(board);
 
-        if (line.empty())
-            continue;
+    GameEngine engine(gameState);
 
-        std::stringstream ss(line);
+    std::cout << "Before move:\n";
+    std::cout << BoardPrinter::print(engine.getGameState().getBoard()) << std::endl;
 
-        std::string token;
-        std::vector<Piece> row;
+    MoveValidation result =
+        engine.move(
+            Position(7, 0),
+            Position(5, 0));
 
-        while (ss >> token)
-        {
-            if (!isValidToken(token))
-            {
-                std::cout << "ERROR UNKNOWN_TOKEN" << std::endl;
-                return 0;
-            }
+    std::cout << "\nMove valid: "
+              << (result.isValid ? "true" : "false")
+              << std::endl;
 
-            row.emplace_back(token);
-        }
+    std::cout << static_cast<int>(result.reason) << std::endl;
 
-        if (!row.empty())
-        {
-            if (expectedCols == 0)
-            {
-                expectedCols = row.size();
-            }
-            else if (row.size() != expectedCols)
-            {
-                std::cout << "ERROR ROW_WIDTH_MISMATCH" << std::endl;
-                return 0;
-            }
-
-            grid.push_back(row);
-        }
-    }
-
-    Board board(grid);
-
-    GameState game(board);
-
-    CommandProcessor processor(game);
-
-    processor.run();
+    std::cout << "\nAfter move:\n";
+    std::cout << BoardPrinter::print(engine.getGameState().getBoard()) << std::endl;
 
     return 0;
 }

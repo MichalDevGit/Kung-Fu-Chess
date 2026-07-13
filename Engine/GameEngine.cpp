@@ -29,13 +29,3 @@ const GameState& GameEngine::getGameState() const
 {
     return gameState;
 }
-
-Board& GameState::getBoard()
-{
-    return board;
-}
-
-const Board& GameState::getBoard() const
-{
-    return board;
-}

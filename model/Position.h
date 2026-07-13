@@ -1,3 +1,6 @@
+#ifndef POSITION_H
+#define POSITION_H
+
 class Position
 {
 private:
@@ -18,3 +21,5 @@ public:
     bool operator!=(const Position& other) const;
     bool operator<(const Position& other) const;
 };
+
+#endif
