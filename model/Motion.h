@@ -5,6 +5,12 @@
 
 class Motion
 {
+private:
+    Position from;
+    Position to;
+
+    long long startTime;
+    long long endTime;
 public:
     Motion();
     Motion(
@@ -13,10 +19,11 @@ public:
 
     const Position& getFrom() const;
     const Position& getTo() const;
+    const Position& getStartTime() const;
+    const Position& getEndTime() const;
+    bool isFinished(long long currentTime) const;
+    bool hasStarted(long long currentTime) const;
 
-private:
-    Position from;
-    Position to;
 };
 
 #endif

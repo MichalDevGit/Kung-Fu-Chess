@@ -25,3 +25,18 @@ const Motion& RealTimeArbiter::getCurrentMotion() const
 {
     return currentMotion;
 }
+
+void RealTimeArbiter::advanceTime(long long milliseconds)
+{
+    currentTime += milliseconds;
+}
+
+long long RealTimeArbiter::getCurrentTime() const
+{
+    return currentTime;
+}
+
+bool RealTimeArbiter::shouldFinishCurrentMotion() const{
+    return active &&
+    currentMotion.isFinished(currentTime);
+}

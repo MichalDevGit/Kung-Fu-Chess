@@ -5,6 +5,11 @@
 
 class RealTimeArbiter
 {
+private:
+    bool active;
+    Motion currentMotion;
+    long long currentTime;
+
 public:
     RealTimeArbiter();
 
@@ -16,9 +21,14 @@ public:
 
     const Motion& getCurrentMotion() const;
 
-private:
-    bool active;
-    Motion currentMotion;
+    const Motion& getCurrentMotion() const;
+
+    void advanceTime(long long milliseconds);
+
+    long long getCurrentTime() const;
+
+    bool shouldFinishCurrentMotion() const;
+
 };
 
 #endif
