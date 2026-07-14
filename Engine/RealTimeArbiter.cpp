@@ -1,7 +1,8 @@
 #include "RealTimeArbiter.h"
 
 RealTimeArbiter::RealTimeArbiter()
-    : active(false)
+    : active(false),
+      currentTime(0)
 {
 }
 
@@ -10,8 +11,18 @@ bool RealTimeArbiter::hasActiveMotion() const
     return active;
 }
 
-void RealTimeArbiter::startMotion(const Motion& motion)
+void RealTimeArbiter::startMotion(
+    const Position& from,
+    const Position& to,
+    long long duration
+)
 {
+    Motion motion(
+        from,
+        to,
+        currentTime,
+        currentTime + duration);
+
     currentMotion = motion;
     active = true;
 }
@@ -19,6 +30,7 @@ void RealTimeArbiter::startMotion(const Motion& motion)
 void RealTimeArbiter::finishMotion()
 {
     active = false;
+    currentMotion = Motion();
 }
 
 const Motion& RealTimeArbiter::getCurrentMotion() const

@@ -15,7 +15,10 @@ public:
     Motion();
     Motion(
         const Position& from,
-        const Position& to);
+        const Position& to,
+        long long startTime, 
+        long long endTime
+    );
 
     const Position& getFrom() const;
     const Position& getTo() const;

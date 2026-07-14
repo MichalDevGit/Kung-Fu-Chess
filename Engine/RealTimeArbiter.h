@@ -15,11 +15,12 @@ public:
 
     bool hasActiveMotion() const;
 
-    void startMotion(const Motion& motion);
+    void startMotion(
+        const Position& from,
+        const Position& to,
+        long long duration);
 
     void finishMotion();
-
-    const Motion& getCurrentMotion() const;
 
     const Motion& getCurrentMotion() const;
 
