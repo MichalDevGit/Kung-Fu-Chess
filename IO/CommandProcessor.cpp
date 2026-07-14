@@ -122,5 +122,15 @@ void CommandProcessor::executeCommands(
                 std::cout << '\n';
             }
         }
+        else if (command == "jump")
+        {
+            int x;
+            int y;
+        
+            input >> x >> y;
+        
+            controller.jump(
+                mapper.pixelToCell(x, y));
+        }
     }
 }

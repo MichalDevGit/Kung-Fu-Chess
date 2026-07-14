@@ -11,7 +11,7 @@ std::set<Position> PawnRule::legalDestinations(
     const Position from = piece.getPosition();
     const bool isWhite = piece.getColor() == PieceColor::White;
     const int direction = isWhite ? -1 : 1;
-    const int startRow = isWhite ? 6 : 1;
+    const int startRow = isWhite ? board.getRows() - 2 : 1;
 
     Position oneStepForward(from.getRow() + direction, from.getCol());
     if (board.isValidPosition(oneStepForward) &&

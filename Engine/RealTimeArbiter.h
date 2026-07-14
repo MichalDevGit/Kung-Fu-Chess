@@ -2,13 +2,18 @@
 #define REALTIMEARBITER_H
 
 #include "../model/Motion.h"
+#include "../model/Jump.h"
 
 class RealTimeArbiter
 {
 private:
     bool active;
+
     Motion currentMotion;
     long long currentTime;
+
+    bool jumpActive;
+    Jump currentJump;
 
 public:
     RealTimeArbiter();
@@ -30,6 +35,18 @@ public:
 
     bool shouldFinishCurrentMotion() const;
 
+
+    void startJump(
+        const Position& position,
+        long long duration);
+    
+    void finishJump();
+    
+    bool hasActiveJump() const;
+    
+    const Jump& getCurrentJump() const;
+    
+    bool shouldFinishCurrentJump() const;
 };
 
 #endif

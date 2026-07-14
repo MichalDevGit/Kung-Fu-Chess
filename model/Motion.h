@@ -6,9 +6,9 @@
 class Motion
 {
 private:
+    bool active;
     Position from;
     Position to;
-
     long long startTime;
     long long endTime;
 public:

@@ -13,6 +13,7 @@ public:
     void click(const Position& position);
     void wait(long long milliseconds);
     void printBoard(std::ostream& out) const;
+    void jump(const Position& position);
 
     bool hasSelectedPiece() const;
     Position getSelectedPosition() const;

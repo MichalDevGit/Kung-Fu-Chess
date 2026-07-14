@@ -45,8 +45,75 @@ MoveValidation GameEngine::requestMove(
     return validation;
 }
 
+MoveValidation GameEngine::requestJump(
+    const Position& position)
+{
+    if (gameState.isGameOver())
+    {
+        return MoveValidation(
+            false,
+            MoveValidationReason::GameOver);
+    }
+
+    if (arbiter.hasActiveMotion())
+    {
+        return MoveValidation(
+            false,
+            MoveValidationReason::MoveAlreadyInProgress);
+    }
+
+    Piece* piece =
+        getBoard().getPiece(position);
+
+    if (piece == nullptr)
+    {
+        return MoveValidation(
+            false,
+            MoveValidationReason::SourceEmpty);
+    }
+
+    if (arbiter.hasActiveJump())
+    {
+        return MoveValidation(
+            false,
+            MoveValidationReason::MoveAlreadyInProgress);
+    }
+    
+    arbiter.startJump(position, MILLIS_PER_SQUARE);
+    
+    return MoveValidation(
+        true,
+        MoveValidationReason::Valid);
+}
+
 void GameEngine::executeMove(const Motion& motion)
 {
+    if (arbiter.hasActiveJump())
+    {
+        const Jump& jump =
+            arbiter.getCurrentJump();
+    
+        if (motion.getTo() == jump.getPosition())
+        {
+            Piece* jumpingPiece =
+                getBoard().getPiece(jump.getPosition());
+    
+            Piece* movingPiece =
+                getBoard().getPiece(motion.getFrom());
+    
+            if (jumpingPiece != nullptr &&
+                movingPiece != nullptr &&
+                jumpingPiece->getColor() != movingPiece->getColor())
+            {
+                getBoard().removePiece(motion.getFrom());
+    
+                arbiter.finishJump();
+    
+                return;
+            }
+        }
+    }
+
     Piece* destinationPiece =
         getBoard().getPiece(motion.getTo());
 
@@ -99,6 +166,8 @@ void GameEngine::advanceTime(long long milliseconds)
     arbiter.advanceTime(milliseconds);
     
     settleCompletedMotions();
+
+    settleCompletedJumps();
 }
 
 bool GameEngine::hasPieceAt(const Position& position) const
@@ -171,6 +240,21 @@ void GameEngine::settleCompletedMotions()
     executeMove(arbiter.getCurrentMotion());
     
     arbiter.finishMotion();
+}
+
+void GameEngine::settleCompletedJumps()
+{
+    if (!arbiter.hasActiveJump())
+    {
+        return;
+    }
+
+    if (!arbiter.shouldFinishCurrentJump())
+    {
+        return;
+    }
+
+    arbiter.finishJump();
 }
 
 const GameState& GameEngine::getGameState() const

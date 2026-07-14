@@ -59,6 +59,11 @@ void Controller::printBoard(std::ostream& out) const{
         gameEngine.getGameState().getBoard());
 }
 
+void Controller::jump(const Position& position)
+{
+    gameEngine.requestJump(position);
+}
+
 bool Controller::hasSelectedPiece() const
 {
     return hasSelection;

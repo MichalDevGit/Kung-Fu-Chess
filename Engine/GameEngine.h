@@ -21,6 +21,8 @@ private:
 
     void settleCompletedMotions();
 
+    void settleCompletedJumps();
+
     int calculatePathLength(
         const Piece& piece,
         const Position& from,
@@ -34,6 +36,9 @@ public:
     MoveValidation requestMove(
         const Position& from,
         const Position& to);
+
+    MoveValidation requestJump(
+        const Position& position);
 
     void executeMove(const Motion& motion);
         
