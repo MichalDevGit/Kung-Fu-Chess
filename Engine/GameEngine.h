@@ -14,18 +14,22 @@ private:
     RuleEngine ruleEngine;
     RealTimeArbiter arbiter;
     static constexpr long long MILLIS_PER_SQUARE = 1000;
+    
     Board& getBoard();
+
     const Board& getBoard() const;
 
-    void advanceTime(long long milliseconds);
+    void settleCompletedMotions();
 
     int calculatePathLength(
         const Piece& piece,
         const Position& from,
         const Position& to) const;
-
+        
 public:
     GameEngine(const GameState& gameState);
+
+    void advanceTime(long long milliseconds);
 
     MoveValidation requestMove(
         const Position& from,
@@ -36,6 +40,10 @@ public:
     const GameState& getGameState() const;
 
     bool hasPieceAt(const Position& position) const;
+
+    bool hasActiveMotion() const;
+
+    long long getCurrentTime() const;
 };
 
 #endif
