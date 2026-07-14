@@ -3,6 +3,7 @@
 
 #include "../Engine/GameEngine.h"
 #include "../Model/Position.h"
+#include "../IO/BoardPrinter.h"
 
 class Controller
 {

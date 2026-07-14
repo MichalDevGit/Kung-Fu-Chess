@@ -26,11 +26,13 @@ const Position& Motion::getTo() const
     return to;
 }
 
-const long long Motion::getStartTime() const{
+long long Motion::getStartTime() const
+{
     return startTime;
 }
 
-const long long Motion::getEndTime() const{
+long long Motion::getEndTime() const
+{
     return endTime;
 }
 

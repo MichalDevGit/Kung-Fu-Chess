@@ -5,8 +5,8 @@
 
 #include "../Controller/Controller.h"
 #include "../Engine/GameEngine.h"
-#include "../IO/BoardMapper.h"
-#include "../IO/BoardParser.h"
+#include "../Controller/BoardMapper.h"
+#include "BoardParser.h"
 #include "../Model/GameState.h"
 
 void CommandProcessor::run()
