@@ -25,6 +25,12 @@ public:
 
     long long getEndTime() const;
 
+    bool isActive() const;
+
+    void activate();
+
+    void deactivate();
+
     bool isFinished(long long currentTime) const;
 };
 

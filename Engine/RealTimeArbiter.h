@@ -7,12 +7,10 @@
 class RealTimeArbiter
 {
 private:
-    bool active;
 
     Motion currentMotion;
     long long currentTime;
 
-    bool jumpActive;
     Jump currentJump;
 
 public:

@@ -1,7 +1,8 @@
 #include "Jump.h"
 
 Jump::Jump()
-    : position(0, 0),
+    : active(false),
+      position(0, 0),
       startTime(0),
       endTime(0)
 {
@@ -11,7 +12,8 @@ Jump::Jump(
     const Position& position,
     long long startTime,
     long long endTime)
-    : position(position),
+    : active(true),
+      position(position),
       startTime(startTime),
       endTime(endTime)
 {
@@ -35,4 +37,21 @@ long long Jump::getEndTime() const
 bool Jump::isFinished(long long currentTime) const
 {
     return currentTime >= endTime;
+}
+
+bool Jump::isActive() const
+{
+    return active;
+}
+
+
+void Jump::activate()
+{
+    active = true;
+}
+
+
+void Jump::deactivate()
+{
+    active = false;
 }

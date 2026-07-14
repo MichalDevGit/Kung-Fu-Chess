@@ -1,20 +1,18 @@
 #include "RealTimeArbiter.h"
 
 RealTimeArbiter::RealTimeArbiter()
-    : active(false),
-      currentTime(0),
-      jumpActive(false)
+    : currentTime(0)
 {
 }
 
 bool RealTimeArbiter::hasActiveMotion() const
 {
-    return active;
+    return currentMotion.isActive();
 }
 
 bool RealTimeArbiter::hasActiveJump() const
 {
-    return jumpActive;
+    return currentJump.isActive();
 }
 
 void RealTimeArbiter::startMotion(
@@ -30,7 +28,6 @@ void RealTimeArbiter::startMotion(
         currentTime + duration);
 
     currentMotion = motion;
-    active = true;
 }
 
 void RealTimeArbiter::startJump(
@@ -43,19 +40,16 @@ void RealTimeArbiter::startJump(
         currentTime + duration);
 
     currentJump = jump;
-    jumpActive = true;
 }
 
 void RealTimeArbiter::finishMotion()
 {
-    active = false;
-    currentMotion = Motion();
+    currentMotion.deactivate();
 }
 
 void RealTimeArbiter::finishJump()
 {
-    jumpActive = false;
-    currentJump = Jump();
+    currentJump.deactivate();
 }
 
 const Motion& RealTimeArbiter::getCurrentMotion() const
@@ -78,13 +72,14 @@ long long RealTimeArbiter::getCurrentTime() const
     return currentTime;
 }
 
-bool RealTimeArbiter::shouldFinishCurrentMotion() const{
-    return active &&
-    currentMotion.isFinished(currentTime);
+bool RealTimeArbiter::shouldFinishCurrentMotion() const
+{
+    return currentMotion.isActive() &&
+           currentMotion.isFinished(currentTime);
 }
 
 bool RealTimeArbiter::shouldFinishCurrentJump() const
 {
-    return jumpActive &&
+    return currentJump.isActive() &&
            currentJump.isFinished(currentTime);
 }
