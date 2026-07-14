@@ -1,6 +1,8 @@
 #include "BoardParser.h"
 
 #include <sstream>
+#include <vector>
+#include <stdexcept>
 
 namespace
 {
@@ -30,47 +32,118 @@ PieceColor parsePieceColor(char colorChar)
     }
 }
 
-Piece parsePieceFromToken(const std::string& token,
-                          const Position& position)
+bool isValidToken(const std::string& token)
 {
-    PieceColor color = PieceColor::None;
-    PieceType type = PieceType::Empty;
-
-    if (token != "." && token.size() >= 2)
+    if (token == ".")
     {
-        color = parsePieceColor(token[0]);
-        type = parsePieceType(token[1]);
+        return true;
     }
 
-    return Piece(nextPieceId++, type, color, position);
+    if (token.size() != 2)
+    {
+        return false;
+    }
+
+    PieceColor color =
+        parsePieceColor(token[0]);
+
+    PieceType type =
+        parsePieceType(token[1]);
+
+    return color != PieceColor::None &&
+           type != PieceType::Empty;
+}
+
+Piece parsePieceFromToken(
+    const std::string& token,
+    const Position& position)
+{
+    PieceColor color =
+        parsePieceColor(token[0]);
+
+    PieceType type =
+        parsePieceType(token[1]);
+
+    return Piece(
+        nextPieceId++,
+        type,
+        color,
+        position);
 }
 }
 
 Board BoardParser::parse(const std::string& boardText)
 {
-    Board board(8, 8);
-
     std::istringstream input(boardText);
 
-    std::string token;
+    std::vector<std::vector<std::string>> rows;
 
-    int row = 0;
-    int col = 0;
+    std::string line;
 
-    while (input >> token)
+    while (std::getline(input, line))
     {
-        if (token != ".")
+        if (line.empty())
         {
-            board.addPiece(
-                parsePieceFromToken(token, Position(row, col)));
+            continue;
         }
 
-        col++;
+        std::istringstream lineStream(line);
 
-        if (col == board.getCols())
+        std::vector<std::string> tokens;
+
+        std::string token;
+
+        while (lineStream >> token)
         {
-            col = 0;
-            row++;
+            if (!isValidToken(token))
+            {
+                throw std::runtime_error(
+                    "ERROR UNKNOWN_TOKEN");
+            }
+
+            tokens.push_back(token);
+        }
+
+        if (!tokens.empty())
+        {
+            rows.push_back(tokens);
+        }
+    }
+
+    if (rows.empty())
+    {
+        return Board(0, 0);
+    }
+
+    int cols =
+        rows[0].size();
+
+    for (const auto& row : rows)
+    {
+        if (row.size() != cols)
+        {
+            throw std::runtime_error(
+                "ERROR ROW_WIDTH_MISMATCH");
+        }
+    }
+
+    Board board(
+        rows.size(),
+        cols);
+
+    for (int row = 0; row < (int)rows.size(); row++)
+    {
+        for (int col = 0; col < cols; col++)
+        {
+            if (rows[row][col] == ".")
+            {
+                continue;
+            }
+
+            board.addPiece(
+                parsePieceFromToken(
+                    rows[row][col],
+                    Position(row, col)));
         }
     }
 

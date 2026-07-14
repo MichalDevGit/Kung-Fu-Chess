@@ -1,8 +1,5 @@
 #include "RuleEngine.h"
 
-#include "../Model/Piece.h"
-#include "../common/enums/PieceType.h"
-
 RuleEngine::RuleEngine()
 {
     rulesByType[PieceType::Bishop] = &bishopRule;

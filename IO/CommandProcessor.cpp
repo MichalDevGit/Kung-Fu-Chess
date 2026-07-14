@@ -2,28 +2,52 @@
 
 #include <iostream>
 #include <sstream>
+#include <algorithm>
+#include <cctype>
 
-#include "../Controller/Controller.h"
-#include "../Engine/GameEngine.h"
-#include "../Controller/BoardMapper.h"
-#include "BoardParser.h"
-#include "../Model/GameState.h"
+namespace
+{
+std::string trim(const std::string& text)
+{
+    size_t first =
+        text.find_first_not_of(" \t\r\n");
+
+    if (first == std::string::npos)
+    {
+        return "";
+    }
+
+    size_t last =
+        text.find_last_not_of(" \t\r\n");
+
+    return text.substr(
+        first,
+        last - first + 1);
+}
+}
 
 void CommandProcessor::run()
 {
-    std::string boardText =
-        readBoardText();
+    try
+    {
+        std::string boardText =
+            readBoardText();
 
-    Board board =
-        BoardParser::parse(boardText);
+        Board board =
+            BoardParser::parse(boardText);
 
-    GameState gameState(board);
+        GameState gameState(board);
 
-    GameEngine engine(gameState);
+        GameEngine engine(gameState);
 
-    Controller controller(engine);
+        Controller controller(engine);
 
-    executeCommands(controller);
+        executeCommands(controller);
+    }
+    catch (const std::exception& exception)
+    {
+        std::cout << exception.what();
+    }
 }
 
 std::string CommandProcessor::readBoardText() const
@@ -34,17 +58,20 @@ std::string CommandProcessor::readBoardText() const
 
     while (std::getline(std::cin, line))
     {
-        if (line == "Commands:")
+        std::string trimmed =
+            trim(line);
+
+        if (trimmed == "Commands:")
         {
             break;
         }
 
-        if (line == "Board:")
+        if (trimmed == "Board:")
         {
             continue;
         }
 
-        boardText << line << '\n';
+        boardText << trimmed << '\n';
     }
 
     return boardText.str();

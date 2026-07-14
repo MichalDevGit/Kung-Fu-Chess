@@ -1,7 +1,7 @@
 #ifndef REALTIMEARBITER_H
 #define REALTIMEARBITER_H
 
-#include "../Model/Motion.h"
+#include "../model/Motion.h"
 
 class RealTimeArbiter
 {

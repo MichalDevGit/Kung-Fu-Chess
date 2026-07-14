@@ -4,8 +4,10 @@
 #include <map>
 
 #include "../common/DTO/MoveValidation.h"
-#include "../Model/Board.h"
-#include "../Model/Position.h"
+#include "../common/enums/PieceType.h"
+#include "../model/Board.h"
+#include "../model/Position.h"
+#include "../model/Piece.h"
 #include "BishopRule.h"
 #include "KingRule.h"
 #include "KnightRule.h"

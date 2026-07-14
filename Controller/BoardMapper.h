@@ -1,7 +1,7 @@
 #ifndef BOARDMAPPER_H
 #define BOARDMAPPER_H
 
-#include "../Model/Position.h"
+#include "../model/Position.h"
 
 class BoardMapper
 {

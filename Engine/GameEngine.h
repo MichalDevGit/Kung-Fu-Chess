@@ -1,8 +1,8 @@
 #ifndef GAMEENGINE_H
 #define GAMEENGINE_H
 
-#include "../Model/GameState.h"
-#include "../Rules/RuleEngine.h"
+#include "../model/GameState.h"
+#include "../rules/RuleEngine.h"
 #include "../common/DTO/MoveValidation.h"
 #include "RealTimeArbiter.h"
 #include "../common/enums/PieceType.h"

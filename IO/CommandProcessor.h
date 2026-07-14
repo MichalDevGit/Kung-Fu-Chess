@@ -2,6 +2,11 @@
 #define COMMANDPROCESSOR_H
 
 #include <string>
+#include "../Controller/Controller.h"
+#include "../Engine/GameEngine.h"
+#include "../Controller/BoardMapper.h"
+#include "../model/GameState.h"
+#include "BoardParser.h"
 
 class CommandProcessor
 {
