@@ -9,10 +9,20 @@ Controller::Controller(GameEngine& gameEngine)
 
 void Controller::click(const Position& position)
 {
+    const Board& board =
+        gameEngine.getGameState().getBoard();
+
+    if (!board.isValidPosition(position))
+    {
+        return;
+    }
+
+    const Piece* clickedPiece =
+        board.getPiece(position);
+
     if (!hasSelection)
     {
-
-        if (!gameEngine.hasPieceAt(position))
+        if (clickedPiece == nullptr)
         {
             return;
         }
@@ -22,10 +32,31 @@ void Controller::click(const Position& position)
         return;
     }
 
-    MoveValidation result =
-    gameEngine.requestMove(selectedPosition, position);
-    
+    const Piece* selectedPiece =
+        board.getPiece(selectedPosition);
+
+    if (clickedPiece != nullptr &&
+        selectedPiece != nullptr &&
+        clickedPiece->getColor() == selectedPiece->getColor())
+    {
+        selectedPosition = position;
+        return;
+    }
+
+    gameEngine.requestMove(
+        selectedPosition,
+        position);
+
     hasSelection = false;
+}
+
+void Controller::wait(long long milliseconds){
+    gameEngine.advanceTime(milliseconds);
+}
+
+void Controller::printBoard(std::ostream& out) const{
+    out << BoardPrinter::print(
+        gameEngine.getGameState().getBoard());
 }
 
 bool Controller::hasSelectedPiece() const

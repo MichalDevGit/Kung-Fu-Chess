@@ -10,6 +10,8 @@ public:
     explicit Controller(GameEngine& gameEngine);
 
     void click(const Position& position);
+    void wait(long long milliseconds);
+    void printBoard(std::ostream& out) const;
 
     bool hasSelectedPiece() const;
     Position getSelectedPosition() const;
