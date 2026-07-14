@@ -2,57 +2,98 @@
 
 #include <iostream>
 #include <sstream>
-#include <string>
 
-CommandProcessor::CommandProcessor(Controller& controller)
-    : controller(controller)
-{
-}
+#include "../Controller/Controller.h"
+#include "../Engine/GameEngine.h"
+#include "../IO/BoardMapper.h"
+#include "../IO/BoardParser.h"
+#include "../Model/GameState.h"
 
 void CommandProcessor::run()
 {
+    std::string boardText =
+        readBoardText();
+
+    Board board =
+        BoardParser::parse(boardText);
+
+    GameState gameState(board);
+
+    GameEngine engine(gameState);
+
+    Controller controller(engine);
+
+    executeCommands(controller);
+}
+
+std::string CommandProcessor::readBoardText() const
+{
+    std::ostringstream boardText;
+
     std::string line;
 
     while (std::getline(std::cin, line))
     {
-        if (line == "print board")
+        if (line == "Commands:")
         {
-            controller.printBoard(std::cout);
-            std::cout << std::endl;
+            break;
+        }
+
+        if (line == "Board:")
+        {
             continue;
         }
 
+        boardText << line << '\n';
+    }
+
+    return boardText.str();
+}
+
+void CommandProcessor::executeCommands(
+    Controller& controller) const
+{
+    BoardMapper mapper;
+
+    std::string line;
+
+    while (std::getline(std::cin, line))
+    {
         std::istringstream input(line);
 
         std::string command;
+
         input >> command;
-
-        if (command == "wait")
-        {
-            long long milliseconds;
-
-            if (input >> milliseconds)
-            {
-                controller.wait(milliseconds);
-            }
-
-            continue;
-        }
 
         if (command == "click")
         {
             int x;
             int y;
 
-            if (input >> x >> y)
+            input >> x >> y;
+
+            controller.click(
+                mapper.pixelToCell(x, y));
+        }
+        else if (command == "wait")
+        {
+            long long milliseconds;
+
+            input >> milliseconds;
+
+            controller.wait(milliseconds);
+        }
+        else if (command == "print")
+        {
+            std::string what;
+
+            input >> what;
+
+            if (what == "board")
             {
-                Position position =
-                    boardMapper.pixelToCell(x, y);
-
-                controller.click(position);
+                controller.printBoard(std::cout);
+                std::cout << '\n';
             }
-
-            continue;
         }
     }
 }

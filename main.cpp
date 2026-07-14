@@ -1,17 +1,10 @@
-#include "Model/Board.h"
-#include "Model/GameState.h"
-#include "Engine/GameEngine.h"
-#include "Controller/Controller.h"
+#include "IO/CommandProcessor.h"
 
 int main()
 {
-    Board board(8, 8);
+    CommandProcessor processor;
 
-    GameState gameState(board);
-
-    GameEngine engine(gameState);
-
-    Controller controller(engine);
+    processor.run();
 
     return 0;
 }
