@@ -1,4 +1,0 @@
-C:/My Studies/KamaTech/CTD/Chess Game/build/CMakeFiles/KungFuChess.dir
-C:/My Studies/KamaTech/CTD/Chess Game/build/CMakeFiles/KungFuChess_tests.dir
-C:/My Studies/KamaTech/CTD/Chess Game/build/CMakeFiles/ALL_BUILD.dir
-C:/My Studies/KamaTech/CTD/Chess Game/build/CMakeFiles/ZERO_CHECK.dir
