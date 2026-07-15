@@ -1,5 +1,7 @@
-#include "../../../doctest.h"
-#include "../../../src/logic/model/Board.h"
+
+#include "tests/doctest.h"
+#include "src/logic/model/Board.h"
+#include <stdexcept>
 
 TEST_CASE("Testing Board class functionality") {
     Board board(8, 8);

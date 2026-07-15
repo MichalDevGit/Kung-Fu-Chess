@@ -1,0 +1,124 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\controller\board_mapper_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\controller\controller_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\controller\real_time_arbiter_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\engine\game_engine_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\io\board_parser_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\io\board_printer_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\io\command_processor_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\model\board_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\model\game_state_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\model\jump_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\model\motion_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\model\piece_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\model\position_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\rules\rule_engine_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\logic_tests\rules\rules_test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\tests\test_main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\UI\img.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\Controller\BoardMapper.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\Controller\Controller.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\Controller\RealTimeArbiter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\Engine\GameEngine.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\IO\BoardParser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\IO\BoardPrinter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\IO\CommandProcessor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\model\Board.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\model\GameState.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\model\Jump.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\model\Motion.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\model\Piece.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\model\Position.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\BishopRule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\KingRule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\KnightRule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\PawnRule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\QueenRule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\RookRule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\RuleEngine.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\My Studies\KamaTech\CTD\Chess Game\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{1F8138AC-5946-3CA3-9B4D-206390839311}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

@@ -1,5 +1,6 @@
-#include "../../../doctest.h"
-#include "../../../src/IO/BoardPrinter.h"
+
+#include "tests/doctest.h"
+#include "src/logic/IO/BoardPrinter.h"
 
 TEST_CASE("Testing BoardPrinter") {
     Board board(1, 2);

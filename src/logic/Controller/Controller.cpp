@@ -1,5 +1,7 @@
 #include "Controller.h"
 
+#include <ostream>
+
 Controller::Controller(GameEngine& gameEngine)
     : gameEngine(gameEngine),
       hasSelection(false),

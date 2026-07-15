@@ -1,5 +1,6 @@
-#include "../../../doctest.h"
-#include "../../../src/logic/model/Jump.h"
+
+#include "tests/doctest.h"
+#include "src/logic/model/Jump.h"
 
 TEST_CASE("Testing Jump class functionality") {
     Position p(3, 3);

@@ -1,6 +1,6 @@
-#include "..\..\doctest.h"
 
-#include "..\..\..\model\Piece.h"
+#include "tests/doctest.h"
+#include "src/logic/model/Piece.h"
 
 TEST_CASE("Testing Piece class functionality") {
 
@@ -26,8 +26,8 @@ TEST_CASE("Testing Piece class functionality") {
 
     SUBCASE("Setters and State changes") {
         Piece p;
-        p.setState(PieceState::Moved);
-        CHECK(p.getState() == PieceState::Moved);
+        p.setState(PieceState::Moving);
+        CHECK(p.getState() == PieceState::Moving);
 
         p.setPosition(Position(5, 5));
         CHECK(p.getPosition() == Position(5, 5));

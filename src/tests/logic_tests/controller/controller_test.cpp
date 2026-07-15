@@ -1,6 +1,6 @@
-#include "../../../doctest.h"
-#include "../../../src/controller/Controller.h"
-#include "../../../src/logic/engine/GameEngine.h"
+#include "tests/doctest.h"
+#include "src/logic/Controller/Controller.h"
+#include "src/logic/Engine/GameEngine.h"
 
 TEST_CASE("Testing Controller interaction") {
     Board board(8, 8);

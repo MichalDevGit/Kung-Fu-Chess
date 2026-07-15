@@ -1,5 +1,6 @@
-#include "../../../doctest.h"
-#include "../../../src/logic/model/Motion.h"
+
+#include "tests/doctest.h"
+#include "src/logic/model/Motion.h"
 
 TEST_CASE("Testing Motion class functionality") {
     Position p1(0, 0), p2(1, 1);

@@ -1,11 +1,12 @@
-#include "../../../doctest.h"
-#include "../../../src/logic/rules/BishopRule.h"
-#include "../../../src/logic/rules/KingRule.h"
-#include "../../../src/logic/rules/KnightRule.h"
-#include "../../../src/logic/rules/PawnRule.h"
-#include "../../../src/logic/rules/QueenRule.h"
-#include "../../../src/logic/rules/RookRule.h"
-#include "../../../src/logic/model/Board.h"
+
+#include "tests/doctest.h"
+#include "src/logic/rules/BishopRule.h"
+#include "src/logic/rules/KingRule.h"
+#include "src/logic/rules/KnightRule.h"
+#include "src/logic/rules/PawnRule.h"
+#include "src/logic/rules/QueenRule.h"
+#include "src/logic/rules/RookRule.h"
+#include "src/logic/model/Board.h"
 
 TEST_CASE("Testing Movement Rules") {
     Board board(8, 8);

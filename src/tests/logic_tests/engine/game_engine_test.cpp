@@ -1,5 +1,5 @@
-#include "../../../doctest.h"
-#include "../../../src/logic/engine/GameEngine.h"
+#include "tests/doctest.h"
+#include "src/logic/Engine/GameEngine.h"
 
 TEST_CASE("Testing GameEngine flow") {
     // אתחול לוח ומשחק
@@ -47,6 +47,6 @@ TEST_CASE("Testing GameEngine flow") {
         engine.advanceTime(1500);
         
         // בדיקה שהרגלי הפך למלכה
-        CHECK(engine.getBoard().getPiece(Position(0, 4))->getType() == PieceType::Queen);
+        CHECK(engine.getGameState().getBoard().getPiece(Position(0, 4))->getType() == PieceType::Queen);
     }
 }

@@ -1,4 +1,4 @@
-#include "img.hpp"
+#include "UI/img.hpp"
 #include <iostream>
 
 int main() {
@@ -6,7 +6,7 @@ int main() {
         std::cout << "Testing Img class..." << std::endl;
         
         Img img;
-        img.read("assets/board.png", {640, 480}, true);
+        img.read("assets/board_classic.png", {640, 480}, true);
         img.put_text("Hello, Img!", 150, 360, 1.0, {0,0,0});
         img.show();
         

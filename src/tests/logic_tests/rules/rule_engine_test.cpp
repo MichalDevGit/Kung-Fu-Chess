@@ -1,5 +1,6 @@
-#include "../../../doctest.h"
-#include "../../../src/logic/rules/RuleEngine.h"
+
+#include "tests/doctest.h"
+#include "src/logic/rules/RuleEngine.h"
 
 TEST_CASE("Testing RuleEngine validation") {
     RuleEngine engine;

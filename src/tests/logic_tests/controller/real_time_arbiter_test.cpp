@@ -1,5 +1,5 @@
-#include "../../../doctest.h"
-#include "../../../src/controller/RealTimeArbiter.h"
+#include "tests/doctest.h"
+#include "src/logic/Controller/RealTimeArbiter.h"
 
 TEST_CASE("Testing RealTimeArbiter") {
     RealTimeArbiter arbiter;

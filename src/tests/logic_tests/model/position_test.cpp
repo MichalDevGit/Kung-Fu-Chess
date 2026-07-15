@@ -1,5 +1,6 @@
-#include "../../doctest.h"
-#include "../../../logic/model/Position.h"
+
+#include "tests/doctest.h"
+#include "src/logic/model/Position.h"
 
 TEST_CASE("Testing Position class functionality") {
     

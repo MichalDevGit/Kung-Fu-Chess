@@ -1,5 +1,7 @@
-#include "../../../doctest.h"
-#include "../../../src/IO/CommandProcessor.h"
+
+#include "tests/doctest.h"
+#include "src/logic/IO/CommandProcessor.h"
+
 #include <iostream>
 #include <sstream>
 

@@ -1,0 +1,87 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\UI\img.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\Controller\BoardMapper.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\Controller\Controller.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\Controller\RealTimeArbiter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\Engine\GameEngine.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\IO\BoardParser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\IO\BoardPrinter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\IO\CommandProcessor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\model\Board.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\model\GameState.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\model\Jump.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\model\Motion.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\model\Piece.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\model\Position.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\BishopRule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\KingRule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\KnightRule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\PawnRule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\QueenRule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\RookRule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\logic\rules\RuleEngine.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\My Studies\KamaTech\CTD\Chess Game\src\main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="C:\My Studies\KamaTech\CTD\Chess Game\src\UI\img.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\My Studies\KamaTech\CTD\Chess Game\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{1163B5B8-91C0-3FC5-B232-EA9207DE535D}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{1F8138AC-5946-3CA3-9B4D-206390839311}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

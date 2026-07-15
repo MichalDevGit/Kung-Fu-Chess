@@ -1,5 +1,6 @@
-#include "../../../doctest.h"
-#include "../../../src/logic/model/GameState.h"
+
+#include "tests/doctest.h"
+#include "src/logic/model/GameState.h"
 
 TEST_CASE("Testing GameState class functionality") {
     // יצירת לוח התחלתי לבדיקות

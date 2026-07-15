@@ -1,6 +1,8 @@
 #ifndef CONTROLLER_H
 #define CONTROLLER_H
 
+#include <iosfwd>
+
 #include "../Engine/GameEngine.h"
 #include "../model/Position.h"
 #include "../IO/BoardPrinter.h"

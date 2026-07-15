@@ -1,5 +1,5 @@
-#include "../../../doctest.h"
-#include "../../../src/controller/BoardMapper.h"
+#include "tests/doctest.h"
+#include "src/logic/Controller/BoardMapper.h"
 
 TEST_CASE("Testing BoardMapper") {
     BoardMapper mapper;

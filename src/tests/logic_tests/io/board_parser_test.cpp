@@ -1,5 +1,7 @@
-#include "../../../doctest.h"
-#include "../../../src/IO/BoardParser.h"
+
+#include "tests/doctest.h"
+#include "src/logic/IO/BoardParser.h"
+#include <stdexcept>
 
 TEST_CASE("Testing BoardParser") {
     SUBCASE("Parsing valid board") {

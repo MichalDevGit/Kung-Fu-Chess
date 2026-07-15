@@ -1,0 +1,34 @@
+# CMake generation dependency list for this directory.
+C:/My Studies/KamaTech/CTD/Chess Game/CMakeLists.txt
+C:/My Studies/KamaTech/CTD/Chess Game/build/CMakeFiles/4.3.3/CMakeCCompiler.cmake
+C:/My Studies/KamaTech/CTD/Chess Game/build/CMakeFiles/4.3.3/CMakeCXXCompiler.cmake
+C:/My Studies/KamaTech/CTD/Chess Game/build/CMakeFiles/4.3.3/CMakeRCCompiler.cmake
+C:/My Studies/KamaTech/CTD/Chess Game/build/CMakeFiles/4.3.3/CMakeSystem.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/CMakeCInformation.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/CMakeCXXInformation.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/CMakeCommonLanguageInclude.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/CMakeGenericSystem.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/CMakeInitializeConfigs.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/CMakeLanguageInformation.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/CMakeRCInformation.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/CMakeSystemSpecificInformation.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/CMakeSystemSpecificInitialize.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Compiler/CMakeCommonCompilerMacros.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Compiler/MSVC-C.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Compiler/MSVC-CXX.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Compiler/MSVC.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Internal/CMakeCLinkerInformation.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Internal/CMakeCXXLinkerInformation.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Internal/CMakeCommonLinkerInformation.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Linker/MSVC-C.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Linker/MSVC-CXX.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Linker/MSVC.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Platform/Linker/Windows-MSVC-C.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Platform/Linker/Windows-MSVC-CXX.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Platform/Linker/Windows-MSVC.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Platform/Windows-Initialize.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Platform/Windows-MSVC-C.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Platform/Windows-MSVC-CXX.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Platform/Windows-MSVC.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Platform/Windows.cmake
+C:/WinLibs/mingw64/share/cmake-4.3/Modules/Platform/WindowsPaths.cmake
