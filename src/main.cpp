@@ -19,39 +19,26 @@
 // } 
 #include "UI/BoardCanvas.h"
 #include "UI/SpriteManager.h"
-#include "UI/PixelPosition.h"
+#include "common/DTO/PieceView.h"
+#include "logic/model/Position.h" // בהתאם ל-include ב-PieceView.h
 
+int main() {
+    try {
+        BoardCanvas canvas("assets/board_classic.png", 100);
+        SpriteManager spriteManager("assets", "pieces1");
 
-int main()
-{
-    BoardCanvas canvas(
-        "assets/board_classic.png",
-        100
-    );
+        // יצירת מיקום ו-PieceView תקני
+        PositionView pos(2, 2); 
+        PieceView kingWhite(1, PieceType::King, PieceColor::White, PieceState::Idle, pos);
 
+        Img pieceSprite = spriteManager.getPieceSprite(kingWhite, PieceState::Idle, 1);
 
-    SpriteManager spriteManager(
-        "assets",
-        "pieces1"
-    );
+        // שימוש במיקום מתוך ה-PieceView
+        canvas.drawPiece(pieceSprite, kingWhite.getPosition().getRow(), kingWhite.getPosition().getCol());
 
-
-    Img piece = spriteManager.get_sprite(
-        "KW",
-        "idle",
-        1
-    );
-
-
-    canvas.draw_piece(
-        piece,
-        2,
-        2
-    );
-
-
-    canvas.show();
-
-
+        canvas.show();
+    } catch (const std::exception& e) {
+        return 1;
+    }
     return 0;
 }

@@ -1,45 +1,15 @@
 #include "BoardCanvas.h"
 
+BoardCanvas::BoardCanvas(const std::string& boardPath, int cellSize) 
+    : boardImage(boardPath), cellSize(cellSize) {}
 
-BoardCanvas::BoardCanvas(const std::string& board_path,
-                         int cell_size)
-    :
-    cell_size(cell_size)
-{
-    board_image.read(board_path);
+void BoardCanvas::drawPiece(Img& piece, int row, int col) {
+    PixelPosition pos = getCellPosition(row, col);
+    piece.draw_on(boardImage, pos.getX(), pos.getY());
 }
 
-
-PixelPosition BoardCanvas::get_cell_position(int row,
-                                             int col) const
-{
-    return PixelPosition(
-        col * cell_size,
-        row * cell_size
-    );
+PixelPosition BoardCanvas::getCellPosition(int row, int col) const {
+    return PixelPosition(col * cellSize, row * cellSize);
 }
 
-
-void BoardCanvas::draw_piece(Img& piece,
-                             int row,
-                             int col)
-{
-    PixelPosition position =
-        get_cell_position(row, col);
-
-
-    Img& mutable_piece = piece;
-
-
-    mutable_piece.draw_on(
-        board_image,
-        position.getX(),
-        position.getY()
-    );
-}
-
-
-void BoardCanvas::show()
-{
-    board_image.show();
-}
+void BoardCanvas::show() { boardImage.show(); }

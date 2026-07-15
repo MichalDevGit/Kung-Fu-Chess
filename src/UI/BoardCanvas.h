@@ -1,30 +1,15 @@
 #pragma once
-
-#include <string>
-
 #include "img.h"
 #include "PixelPosition.h"
 
-
 class BoardCanvas {
 private:
-    Img board_image;
-    int cell_size;
-
+    Img boardImage;
+    int cellSize;
 
 public:
-    BoardCanvas(const std::string& board_path,
-                int cell_size);
-
-
-    void draw_piece(Img& piece,
-                    int row,
-                    int col);
-
-
+    BoardCanvas(const std::string& boardPath, int cellSize);
+    void drawPiece(Img& piece, int row, int col);
     void show();
-
-
-    PixelPosition get_cell_position(int row,
-                                    int col) const;
+    PixelPosition getCellPosition(int row, int col) const;
 };

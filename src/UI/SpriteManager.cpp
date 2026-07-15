@@ -1,76 +1,55 @@
 #include "SpriteManager.h"
+#include <iostream>
 
-#include <filesystem>
+SpriteManager::SpriteManager(const std::string& assetsPath, const std::string& piecesFolder)
+    : assetsPath(assetsPath), piecesFolder(piecesFolder) {}
 
-
-SpriteManager::SpriteManager(const std::string& assets_path,
-                             const std::string& pieces_folder)
-    :
-    assets_path(assets_path),
-    pieces_folder(pieces_folder)
-{
-}
-
-
-std::string SpriteManager::create_key(const std::string& piece,
-                                      const std::string& state,
-                                      int frame) const
-{
-    return piece + "_" + state + "_" + std::to_string(frame);
-}
-
-
-std::string SpriteManager::build_sprite_path(const std::string& piece,
-                                             const std::string& state,
-                                             int frame) const
-{
-    return assets_path +
-           "/" +
-           pieces_folder +
-           "/" +
-           piece +
-           "/states/" +
-           state +
-           "/sprites/" +
-           std::to_string(frame) +
-           ".png";
-}
-
-
-Img SpriteManager::get_sprite(const std::string& piece,
-                              const std::string& state,
-                              int frame)
-{
-    std::string key = create_key(piece, state, frame);
-
-
-    auto it = sprite_paths.find(key);
-
-
-    std::string path;
-
-
-    if (it != sprite_paths.end()) {
-        path = it->second;
+// פונקציית עזר להמרה לטקסט לצורך בניית נתיב הקובץ
+std::string SpriteManager::typeToString(PieceType type) const {
+    switch (type) {
+        case PieceType::Pawn:   return "P";
+        case PieceType::Knight: return "N";
+        case PieceType::Bishop: return "B";
+        case PieceType::Rook:   return "R";
+        case PieceType::Queen:  return "Q";
+        case PieceType::King:   return "K";
+        default:                return "P";
     }
-    else {
-        path = build_sprite_path(piece, state, frame);
-        sprite_paths[key] = path;
-    }
+}
 
+std::string SpriteManager::colorToString(PieceColor color) const {
+    return (color == PieceColor::White) ? "W" : "B";
+}
+
+std::string SpriteManager::stateToString(PieceState state) const {
+    switch (state) {
+        case PieceState::Idle:     return "idle";
+        case PieceState::Moving:   return "moving";
+        case PieceState::Captured: return "captured";
+        default:                   return "idle";
+    }
+}
+
+std::string SpriteManager::getPath(PieceType type, PieceColor color, PieceState state, int frame) const {
+    // מבנה נתיב: assets/pieces1/KW/states/idle/sprites/1.png
+    // בהתאם למבנה שהצגת בקוד הקודם שלך
+    return assetsPath + "/" + piecesFolder + "/" + 
+           typeToString(type) + colorToString(color) + "/states/" + 
+           stateToString(state) + "/sprites/" + 
+           std::to_string(frame) + ".png";
+}
+
+Img SpriteManager::getPieceSprite(const PieceView& piece, PieceState state, int frame) {
+    std::string key = typeToString(piece.getType()) + colorToString(piece.getColor()) + 
+                      stateToString(state) + std::to_string(frame);
+
+    // בדיקה אם הספרייט כבר קיים במפה כדי לחסוך טעינה מהדיסק
+    if (spritePaths.find(key) == spritePaths.end()) {
+        spritePaths[key] = getPath(piece.getType(), piece.getColor(), state, frame);
+    }
 
     Img img;
-    img.read(path);
-
+    // ניסיון קריאה מהנתיב שנבנה
+    img.read(spritePaths[key]);
     return img;
-}
-
-
-Img SpriteManager::get_piece_sprite(const PieceView& piece,
-                                    const std::string& state,
-                                    int frame)
-{
-    return get_sprite(piece.toString(),
-                      state,
-                      frame);
 }
