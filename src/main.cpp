@@ -7,7 +7,7 @@ int main() {
         
         Img img;
         img.read("assets/board_classic.png", {640, 480}, true);
-        img.put_text("Hello, Img!", 150, 360, 1.0, {0,0,0});
+        //img.put_text("Hello, Img!", 150, 360, 1.0, {0,0,0});
         img.show();
         
         std::cout << "Img class test completed successfully!" << std::endl;
