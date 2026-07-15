@@ -1,7 +1,7 @@
 #ifndef POSITION_VIEW_H
 #define POSITION_VIEW_H
 
-#include "../engine/Position.h"
+#include "../../logic/model/Position.h"
 
 class PositionView
 {

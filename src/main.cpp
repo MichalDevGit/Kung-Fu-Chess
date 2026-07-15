@@ -1,19 +1,57 @@
-#include "UI/img.hpp"
-#include <iostream>
+// #include "UI/img.hpp"
+// #include <iostream>
 
-int main() {
-    try {
-        std::cout << "Testing Img class..." << std::endl;
+// int main() {
+//     try {
+//         std::cout << "Testing Img class..." << std::endl;
         
-        Img img;
-        img.read("assets/board_classic.png", {640, 480}, true);
-        //img.put_text("Hello, Img!", 150, 360, 1.0, {0,0,0});
-        img.show();
+//         Img img;
+//         img.read("assets/board_classic.png", {640, 480}, true);
+//         //img.put_text("Hello, Img!", 150, 360, 1.0, {0,0,0});
+//         img.show();
         
-        std::cout << "Img class test completed successfully!" << std::endl;
-        return 0;
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        return 1;
-    }
-} 
+//         std::cout << "Img class test completed successfully!" << std::endl;
+//         return 0;
+//     } catch (const std::exception& e) {
+//         std::cerr << "Error: " << e.what() << std::endl;
+//         return 1;
+//     }
+// } 
+#include "UI/BoardCanvas.h"
+#include "UI/SpriteManager.h"
+#include "UI/PixelPosition.h"
+
+
+int main()
+{
+    BoardCanvas canvas(
+        "assets/board_classic.png",
+        100
+    );
+
+
+    SpriteManager spriteManager(
+        "assets",
+        "pieces1"
+    );
+
+
+    Img piece = spriteManager.get_sprite(
+        "KW",
+        "idle",
+        1
+    );
+
+
+    canvas.draw_piece(
+        piece,
+        2,
+        2
+    );
+
+
+    canvas.show();
+
+
+    return 0;
+}

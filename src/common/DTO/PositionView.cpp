@@ -28,3 +28,4 @@ int PositionView::getCol() const
 {
     return col;
 }
+

@@ -3,11 +3,12 @@
 
 #include "PositionView.h"
 
-#include "../../common/enums/PieceColor.h"
-#include "../../common/enums/PieceType.h"
-#include "../../common/enums/PieceState.h"
+#include "../enums/PieceColor.h"
+#include "../enums/PieceType.h"
+#include "../enums/PieceState.h"
 
-#include "../engine/Piece.h"
+#include "../../logic/model/Position.h"
+#include "../../logic/model/Piece.h"
 
 class PieceView
 {
@@ -36,6 +37,9 @@ public:
     PieceType getType() const;
     PieceColor getColor() const;
     PieceState getState() const;
+
+    bool isEmpty() const;
+    std::string toString() const;
 
     const PositionView& getPosition() const;
 };

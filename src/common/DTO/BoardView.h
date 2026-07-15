@@ -5,7 +5,8 @@
 
 #include "PieceView.h"
 
-#include "../engine/Board.h"
+#include "../../logic/model/Board.h"
+
 
 class BoardView
 {
@@ -28,6 +29,8 @@ public:
     int getCols() const;
 
     const std::vector<PieceView>& getPieces() const;
+
+    PieceView getPiece(int row, int col) const;
 };
 
 #endif

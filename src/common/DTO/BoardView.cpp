@@ -39,3 +39,15 @@ const std::vector<PieceView>& BoardView::getPieces() const
 {
     return pieces;
 }
+
+PieceView BoardView::getPiece(int row, int col) const
+{
+    int index = row * cols + col;
+
+    if (index >= 0 && index < static_cast<int>(pieces.size()))
+    {
+        return pieces[index];
+    }
+
+    return PieceView(); 
+}

@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find all source files in src directory
 file(GLOB_RECURSE ALL_SOURCES "src/*.cpp")
-file(GLOB_RECURSE HEADERS "src/*.hpp")
+file(GLOB_RECURSE HEADERS "src/*.hpp" "src/*.h")
 
 # Split sources: everything under src/tests/ belongs to the test executable,
 # the rest (logic + UI + main.cpp) belongs to the game executable.
