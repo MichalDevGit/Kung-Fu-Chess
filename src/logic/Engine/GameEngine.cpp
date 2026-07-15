@@ -1,5 +1,4 @@
 #include "GameEngine.h"
-#include <cstdlib>
 
 GameEngine::GameEngine(const GameState& gameState)
     : gameState(gameState)

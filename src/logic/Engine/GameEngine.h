@@ -1,10 +1,11 @@
 #ifndef GAMEENGINE_H
 #define GAMEENGINE_H
 
+#include <cstdlib>
 #include "../model/GameState.h"
 #include "../rules/RuleEngine.h"
 #include "../../common/DTO/MoveValidation.h"
-#include "RealTimeArbiter.h"
+#include "../Controller/RealTimeArbiter.h"
 #include "../../common/enums/PieceType.h"
 
 class GameEngine
