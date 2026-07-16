@@ -9,7 +9,7 @@
 #include <iostream>
 
 int main() {
-    try {
+    try { 
         BoardCanvas canvas("assets/board_classic.png", 100);
         SpriteManager spriteManager("assets", "pieces2");
         Renderer renderer(canvas, spriteManager);

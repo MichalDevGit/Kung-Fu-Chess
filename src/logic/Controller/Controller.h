@@ -6,6 +6,9 @@
 #include "../Engine/GameEngine.h"
 #include "../model/Position.h"
 #include "../IO/BoardPrinter.h"
+#include "BoardMapper.h"
+#include "../../common/PixelPosition.h"
+#include "../../common/DTO/BoardView.h"
 
 class Controller
 {
@@ -13,6 +16,7 @@ public:
     explicit Controller(GameEngine& gameEngine);
 
     void click(const Position& position);
+    void handlePixelClick(const PixelPosition& pixelPosition);
     void wait(long long milliseconds);
     void printBoard(std::ostream& out) const;
     void jump(const Position& position);
@@ -20,8 +24,11 @@ public:
     bool hasSelectedPiece() const;
     Position getSelectedPosition() const;
 
+    BoardView getBoardView() const;
+
 private:
     GameEngine& gameEngine;
+    BoardMapper boardMapper;
 
     bool hasSelection;
     Position selectedPosition;

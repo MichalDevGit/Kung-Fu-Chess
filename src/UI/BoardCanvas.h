@@ -1,6 +1,6 @@
 #pragma once
 #include "img.h"
-#include "PixelPosition.h"
+#include "../common/PixelPosition.h"
 
 class BoardCanvas {
 private:

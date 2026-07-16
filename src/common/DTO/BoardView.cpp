@@ -19,9 +19,23 @@ BoardView::BoardView(const Board& board)
     : rows(board.getRows()),
       cols(board.getCols())
 {
-    for (const Piece& piece : board.getPieces())
+    for (int row = 0; row < rows; ++row)
     {
-        pieces.emplace_back(piece);
+        for (int col = 0; col < cols; ++col)
+        {
+            const Piece* piece = board.getPiece(Position(row, col));
+
+            if (piece != nullptr)
+            {
+                pieces.emplace_back(*piece);
+            }
+            else
+            {
+                pieces.emplace_back(
+                    PieceView(-1, PieceType::Empty, PieceColor::None,
+                              PieceState::Idle, PositionView(row, col)));
+            }
+        }
     }
 }
 

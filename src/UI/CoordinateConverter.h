@@ -2,7 +2,7 @@
 #define COORDINATE_CONVERTER_H
 
 #include "../common/DTO/PositionView.h"
-#include "PixelPosition.h"
+#include "../common/PixelPosition.h"
 
 class CoordinateConverter
 {

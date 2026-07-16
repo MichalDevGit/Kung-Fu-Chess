@@ -6,3 +6,8 @@ Position BoardMapper::pixelToCell(int x, int y) const
         y / CELL_SIZE,
         x / CELL_SIZE);
 }
+
+Position BoardMapper::pixelToCell(const PixelPosition& pixel) const
+{
+    return pixelToCell(pixel.getX(), pixel.getY());
+}

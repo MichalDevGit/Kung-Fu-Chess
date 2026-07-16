@@ -52,6 +52,11 @@ void Controller::click(const Position& position)
     hasSelection = false;
 }
 
+void Controller::handlePixelClick(const PixelPosition& pixelPosition)
+{
+    click(boardMapper.pixelToCell(pixelPosition));
+}
+
 void Controller::wait(long long milliseconds){
     gameEngine.advanceTime(milliseconds);
 }
@@ -74,4 +79,9 @@ bool Controller::hasSelectedPiece() const
 Position Controller::getSelectedPosition() const
 {
     return selectedPosition;
+}
+
+BoardView Controller::getBoardView() const
+{
+    return BoardView(gameEngine.getGameState().getBoard());
 }
