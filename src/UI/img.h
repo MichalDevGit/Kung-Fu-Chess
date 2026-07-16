@@ -65,7 +65,7 @@ public:
      * @param x X coordinate for top-left corner
      * @param y Y coordinate for top-left corner
      */
-    void draw_on(Img& other_img, int x, int y) const;
+    void draw_on(Img& other_img, int x, int y);
 
 
     /**

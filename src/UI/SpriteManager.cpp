@@ -1,5 +1,5 @@
 #include "SpriteManager.h"
-#include <iostream>
+#include <fstream>
 
 SpriteManager::SpriteManager(const std::string& assetsPath, const std::string& piecesFolder)
     : assetsPath(assetsPath), piecesFolder(piecesFolder) {}
@@ -42,12 +42,10 @@ std::string SpriteManager::getPath(PieceType type, PieceColor color, PieceState 
 Img SpriteManager::getPieceSprite(const PieceView& piece, PieceState state, int frame) {
     std::string key = typeToString(piece.getType()) + colorToString(piece.getColor()) + 
                       stateToString(state) + std::to_string(frame);
-
     // בדיקה אם הספרייט כבר קיים במפה כדי לחסוך טעינה מהדיסק
     if (spritePaths.find(key) == spritePaths.end()) {
         spritePaths[key] = getPath(piece.getType(), piece.getColor(), state, frame);
     }
-
     Img img;
     // ניסיון קריאה מהנתיב שנבנה
     img.read(spritePaths[key]);

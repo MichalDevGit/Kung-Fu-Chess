@@ -1,43 +1,52 @@
-// #include "UI/img.hpp"
-// #include <iostream>
 
-// int main() {
-//     try {
-//         std::cout << "Testing Img class..." << std::endl;
-        
-//         Img img;
-//         img.read("assets/board_classic.png", {640, 480}, true);
-//         //img.put_text("Hello, Img!", 150, 360, 1.0, {0,0,0});
-//         img.show();
-        
-//         std::cout << "Img class test completed successfully!" << std::endl;
-//         return 0;
-//     } catch (const std::exception& e) {
-//         std::cerr << "Error: " << e.what() << std::endl;
-//         return 1;
-//     }
-// } 
 #include "UI/BoardCanvas.h"
 #include "UI/SpriteManager.h"
+#include "UI/Renderer.h"
+#include "common/DTO/BoardView.h"
 #include "common/DTO/PieceView.h"
-#include "logic/model/Position.h" // בהתאם ל-include ב-PieceView.h
+#include "logic/model/Position.h"
+#include <vector>
+#include <iostream>
 
 int main() {
     try {
         BoardCanvas canvas("assets/board_classic.png", 100);
-        SpriteManager spriteManager("assets", "pieces1");
+        SpriteManager spriteManager("assets", "pieces2");
+        Renderer renderer(canvas, spriteManager);
 
-        // יצירת מיקום ו-PieceView תקני
-        PositionView pos(2, 2); 
-        PieceView kingWhite(1, PieceType::King, PieceColor::White, PieceState::Idle, pos);
+        // 1. יצירת וקטור של 64 משבצות ריקות
+        std::vector<PieceView> pieces;
+        for (int i = 0; i < 64; ++i) {
+            // הנחה: PieceView ריק מאותחל עם Type::Empty וצבע/מצב מתאימים
+            pieces.emplace_back(i, PieceType::Empty, PieceColor::White, PieceState::Idle, PositionView(i / 8, i % 8));
+        }
 
-        Img pieceSprite = spriteManager.getPieceSprite(kingWhite, PieceState::Idle, 1);
+        // 2. פונקציית עזר להצבת כלי במיקום הנכון בוקטור
+        auto placePiece = [&](PieceType type, PieceColor color, int row, int col) {
+            int index = row * 8 + col;
+            pieces[index] = PieceView(index, type, color, PieceState::Idle, PositionView(row, col));
+        };
 
-        // שימוש במיקום מתוך ה-PieceView
-        canvas.drawPiece(pieceSprite, kingWhite.getPosition().getRow(), kingWhite.getPosition().getCol());
+        // 3. סידור הכלים הקלאסי
+        PieceType rowOrder[] = {PieceType::Rook, PieceType::Knight, PieceType::Bishop, PieceType::Queen, 
+                                PieceType::King, PieceType::Bishop, PieceType::Knight, PieceType::Rook};
 
-        canvas.show();
+        for (int i = 0; i < 8; ++i) {
+            // שחורים (שורות 0-1)
+            placePiece(rowOrder[i], PieceColor::Black, 0, i);
+            placePiece(PieceType::Pawn, PieceColor::Black, 1, i);
+            
+            // לבנים (שורות 6-7)
+            placePiece(PieceType::Pawn, PieceColor::White, 6, i);
+            placePiece(rowOrder[i], PieceColor::White, 7, i);
+        }
+
+        // 4. אתחול ורינדור
+        BoardView boardView(8, 8, pieces);
+        renderer.render(boardView);
+
     } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
         return 1;
     }
     return 0;

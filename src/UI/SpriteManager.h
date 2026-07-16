@@ -1,6 +1,8 @@
 #pragma once
+#include <iostream>
 #include <string>
 #include <map>
+
 #include "img.h"
 #include "../common/DTO/PieceView.h"
 #include "../common/enums/PieceState.h"

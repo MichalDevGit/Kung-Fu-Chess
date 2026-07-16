@@ -94,85 +94,130 @@ Img Img::clone() const
 }
 
 
-void Img::draw_on(Img& other_img, int x, int y) const
-{
-    if (img.empty() || other_img.img.empty())
-    {
-        throw std::runtime_error(
-            "Both images must be loaded before drawing.");
+// void Img::draw_on(Img& other_img, int x, int y) const
+// {
+//     if (img.empty() || other_img.img.empty())
+//     {
+//         throw std::runtime_error(
+//             "Both images must be loaded before drawing.");
+//     }
+
+
+//     cv::Mat source_img = img;
+//     cv::Mat target_img = other_img.img;
+
+
+//     if (source_img.channels() != target_img.channels())
+//     {
+//         if (source_img.channels() == 3 &&
+//             target_img.channels() == 4)
+//         {
+//             cv::cvtColor(source_img,
+//                          source_img,
+//                          cv::COLOR_BGR2BGRA);
+//         }
+//         else if (source_img.channels() == 4 &&
+//                  target_img.channels() == 3)
+//         {
+//             cv::cvtColor(source_img,
+//                          source_img,
+//                          cv::COLOR_BGRA2BGR);
+//         }
+//     }
+
+
+//     int h = source_img.rows;
+//     int w = source_img.cols;
+
+//     int H = target_img.rows;
+//     int W = target_img.cols;
+
+
+//     if (x < 0 || y < 0 || x + w > W || y + h > H)
+//     {
+//         throw std::runtime_error(
+//             "Image does not fit at the specified position.");
+//     }
+
+
+//     cv::Mat roi = target_img(cv::Rect(x, y, w, h));
+
+
+//     if (source_img.channels() == 4)
+//     {
+//         std::vector<cv::Mat> channels;
+
+//         cv::split(source_img, channels);
+
+//         cv::Mat alpha = channels[3];
+
+//         for (int row = 0; row < h; row++)
+//         {
+//             for (int col = 0; col < w; col++)
+//             {
+//                 double a = alpha.at<uchar>(row, col) / 255.0;
+
+//                 for (int c = 0; c < 3; c++)
+//                 {
+//                     roi.at<cv::Vec3b>(row, col)[c] =
+//                         static_cast<uchar>(
+//                             a * channels[c].at<uchar>(row, col) +
+//                             (1 - a) * roi.at<cv::Vec3b>(row, col)[c]);
+//                 }
+//             }
+//         }
+//     }
+//     else
+//     {
+//         source_img.copyTo(roi);
+//     }
+// }
+
+void Img::draw_on(Img& other_img, int x, int y) {
+    if (img.empty() || other_img.img.empty()) {
+        throw std::runtime_error("Both images must be loaded before drawing.");
     }
 
+    const cv::Mat& source_img = img;
+    cv::Mat& target_img = other_img.img;
 
-    cv::Mat source_img = img;
-    cv::Mat target_img = other_img.img;
-
-
-    if (source_img.channels() != target_img.channels())
-    {
-        if (source_img.channels() == 3 &&
-            target_img.channels() == 4)
-        {
-            cv::cvtColor(source_img,
-                         source_img,
-                         cv::COLOR_BGR2BGRA);
-        }
-        else if (source_img.channels() == 4 &&
-                 target_img.channels() == 3)
-        {
-            cv::cvtColor(source_img,
-                         source_img,
-                         cv::COLOR_BGRA2BGR);
-        }
+    int h = source_img.rows, w = source_img.cols;
+    int H = target_img.rows, W = target_img.cols;
+    if (y + h > H || x + w > W) {
+        throw std::runtime_error("Image does not fit at the specified position.");
     }
-
-
-    int h = source_img.rows;
-    int w = source_img.cols;
-
-    int H = target_img.rows;
-    int W = target_img.cols;
-
-
-    if (x < 0 || y < 0 || x + w > W || y + h > H)
-    {
-        throw std::runtime_error(
-            "Image does not fit at the specified position.");
-    }
-
 
     cv::Mat roi = target_img(cv::Rect(x, y, w, h));
 
+    if (source_img.channels() == 4) {
+        // למקור יש אלפא - תמיד לבצע בלנדינג, בלי קשר למספר הערוצים של היעד
+        std::vector<cv::Mat> srcChannels;
+        cv::split(source_img, srcChannels);
+        cv::Mat alpha;
+        srcChannels[3].convertTo(alpha, CV_32FC1, 1.0 / 255.0);
 
-    if (source_img.channels() == 4)
-    {
-        std::vector<cv::Mat> channels;
+        std::vector<cv::Mat> roiChannels;
+        cv::split(roi, roiChannels);
 
-        cv::split(source_img, channels);
-
-        cv::Mat alpha = channels[3];
-
-        for (int row = 0; row < h; row++)
-        {
-            for (int col = 0; col < w; col++)
-            {
-                double a = alpha.at<uchar>(row, col) / 255.0;
-
-                for (int c = 0; c < 3; c++)
-                {
-                    roi.at<cv::Vec3b>(row, col)[c] =
-                        static_cast<uchar>(
-                            a * channels[c].at<uchar>(row, col) +
-                            (1 - a) * roi.at<cv::Vec3b>(row, col)[c]);
-                }
-            }
+        for (int c = 0; c < 3; ++c) {
+            cv::Mat srcF, dstF, blendedF;
+            srcChannels[c].convertTo(srcF, CV_32FC1);
+            roiChannels[c].convertTo(dstF, CV_32FC1);
+            blendedF = alpha.mul(srcF) + (cv::Scalar(1.0) - alpha).mul(dstF);
+            blendedF.convertTo(roiChannels[c], roiChannels[c].type());
         }
+        cv::merge(roiChannels, roi);
     }
-    else
-    {
+    else if (source_img.channels() == target_img.channels()) {
         source_img.copyTo(roi);
     }
+    else {
+        throw std::runtime_error(
+            "draw_on: unsupported channel combination (source has " +
+            std::to_string(source_img.channels()) + " channels, target has " +
+            std::to_string(target_img.channels()) + ").");
+    }
 }
-
 
 void Img::put_text(const std::string& txt,
                    int x,
