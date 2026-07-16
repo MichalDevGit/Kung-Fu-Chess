@@ -3,6 +3,10 @@
 build/
 out/
 
+build/
+lib/bin/
+*.dll
+
 # ---- Compiled object files ----
 *.o
 *.obj
