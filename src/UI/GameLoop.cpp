@@ -37,9 +37,14 @@ void GameLoop::run()
 
         renderer.render(controller.getBoardView());
 
+        if (controller.isGameOver())
+        {
+            renderer.renderGameOver();
+        }
+
         int key = cv::waitKey(1);
 
-        if (key == ESCAPE_KEY || controller.isGameOver())
+        if (key == ESCAPE_KEY )
         {
             break;
         }

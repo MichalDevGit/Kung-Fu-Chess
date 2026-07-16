@@ -21,3 +21,7 @@ void Renderer::render(const BoardView& snapshot) {
     }
     canvas.show();
 }
+
+void Renderer::renderGameOver(){
+    canvas.drawText("Game Over");
+}

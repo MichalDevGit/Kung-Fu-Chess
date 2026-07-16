@@ -11,4 +11,5 @@ private:
 public:
     Renderer(BoardCanvas& canvas, SpriteManager& spriteManager);
     void render(const BoardView& snapshot);
+    void renderGameOver();
 };

@@ -19,3 +19,8 @@ PixelPosition BoardCanvas::getCellPosition(int row, int col) const {
 void BoardCanvas::show() { frame.show(); }
 
 const std::string& BoardCanvas::getWindowName() const { return Img::windowName(); }
+
+void BoardCanvas::drawText(std::string text){
+    frame.put_text(text, 150, 300, 3.0,{255,255,255,0},10);
+    frame.show();
+}
