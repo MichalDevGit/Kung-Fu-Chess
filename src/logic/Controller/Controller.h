@@ -25,6 +25,7 @@ public:
     Position getSelectedPosition() const;
 
     BoardView getBoardView() const;
+    bool isGameOver() const;
 
 private:
     GameEngine& gameEngine;

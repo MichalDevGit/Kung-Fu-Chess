@@ -85,3 +85,8 @@ BoardView Controller::getBoardView() const
 {
     return BoardView(gameEngine.getGameState().getBoard());
 }
+
+bool Controller::isGameOver() const
+{
+    return gameEngine.getGameState().isGameOver();
+}

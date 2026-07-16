@@ -243,6 +243,12 @@ void Img::put_text(const std::string& txt,
 }
 
 
+const std::string& Img::windowName()
+{
+    static const std::string name = "KungFuChess";
+    return name;
+}
+
 void Img::show()
 {
     if (img.empty())
@@ -250,10 +256,5 @@ void Img::show()
         throw std::runtime_error("Image not loaded.");
     }
 
-
-    cv::imshow("Image", img);
-
-    cv::waitKey(0);
-
-    cv::destroyAllWindows();
+    cv::imshow(windowName(), img);
 }

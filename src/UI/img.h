@@ -84,7 +84,17 @@ public:
 
 
     /**
-     * Display the image in a window
+     * The window name shared by every Img so callers (e.g. a live game loop
+     * registering a mouse callback) can address the same OpenCV window that
+     * show() displays to.
+     */
+    static const std::string& windowName();
+
+    /**
+     * Display the image in the shared window. Purely a drawing operation —
+     * does not poll for or interpret input; callers that need to pump the
+     * window's event queue or read a keypress do so themselves (e.g. via
+     * cv::waitKey), separately from this call.
      */
     void show();
 

@@ -4,12 +4,15 @@
 
 class BoardCanvas {
 private:
-    Img boardImage;
+    Img background;
+    Img frame;
     int cellSize;
 
 public:
     BoardCanvas(const std::string& boardPath, int cellSize);
+    void beginFrame();
     void drawPiece(Img& piece, int row, int col);
     void show();
+    const std::string& getWindowName() const;
     PixelPosition getCellPosition(int row, int col) const;
 };

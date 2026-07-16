@@ -7,8 +7,10 @@ re-read of `src/` unnecessary for most tasks. If you change the architecture in 
 that makes a section below wrong, update that section in the same change.
 
 Last reviewed: 2026-07-16, against the source tree as of commit `9b1b490`, updated
-same-day to reflect the new `Controller::handlePixelClick`/`getBoardView` UI-mediation
-API, the `PixelPosition` move to `common/`, and the `BoardView(const Board&)` fix.
+same-day to reflect the new `Controller::handlePixelClick`/`getBoardView`/`isGameOver`
+UI-mediation API, the `PixelPosition` move to `common/`, the `BoardView(const Board&)`
+fix, and — the big one — the new `GameFactory` + `UI/GameLoop` that finally wire the
+logic layer into a live, playable graphical executable.
 
 ## What this project is
 
@@ -16,9 +18,10 @@ API, the `PixelPosition` move to `common/`, and the `BoardView(const Board&)` fi
 rules, pieces move independently with per-piece cooldowns) implemented in **C++17**,
 rendered with **OpenCV**, built with **CMake**. It is an early-stage / in-progress
 codebase: the domain logic (rules, move validation, real-time timing) is fairly well
-developed and unit-tested, but it is **not yet wired into the graphical executable** —
-see "Current state of integration" below, this is the single most important thing to
-know before making changes.
+developed and unit-tested, and — as of this review — it **is** wired into a live
+graphical executable via `GameFactory` (initial board setup) and `UI/GameLoop` (the
+render/input loop). See "Current state of integration" below for exactly what that
+loop does and doesn't do yet (no animations, no cooldown visuals).
 
 ## Build system
 
@@ -54,17 +57,23 @@ logic/Engine          -- GameEngine; depends on logic/model, logic/rules, logic/
 logic/Controller      -- Controller, RealTimeArbiter, BoardMapper; depends on logic/Engine, logic/model,
                           common/PixelPosition (input) and common/DTO/BoardView (output snapshot)
         ^
-logic/IO              -- BoardParser, BoardPrinter, CommandProcessor; depends on all of the above
-
-UI/                   -- OpenCV rendering; depends ONLY on common/DTO + common/enums + common/PixelPosition,
-                          never on logic/* directly
+logic/IO              -- BoardParser, BoardPrinter, CommandProcessor, GameFactory; depends on all of the above
+        ^
+UI/                   -- OpenCV rendering + the live loop; depends on common/DTO + common/enums +
+                          common/PixelPosition, and — only via UI/GameLoop, only on
+                          logic/Controller/Controller — never directly on logic/Engine/model/rules
 ```
 
 Note: `logic/Controller` depending on `common/DTO/BoardView` (for `Controller::getBoardView()`) and
 `common/PixelPosition` (for `Controller::handlePixelClick()`) does not create a cycle — `common/*`
-still depends only downward on `logic/model`, and `UI/` still never depends on `logic/*`. `PixelPosition`
-lives in `common/` rather than `UI/` specifically so both `UI/` and `logic/Controller` can depend on it
-without either depending on the other.
+still depends only downward on `logic/model`. `PixelPosition` lives in `common/` rather than `UI/`
+specifically so both `UI/` and `logic/Controller` can depend on it without either depending on the other.
+
+`UI/GameLoop` is the one deliberate exception to "UI never depends on logic/*": it holds a
+`Controller&` and calls `handlePixelClick`/`getBoardView`/`isGameOver`/`wait` on it — exactly the
+sanctioned UI↔Controller boundary, and nothing else in `UI/` reaches any further into `logic/*`.
+`GameFactory` (in `logic/IO`, not `logic/Engine`) is what `main.cpp` calls to get a fully-populated
+`GameEngine` to hand to `Controller`; `GameEngine` itself does not depend on `logic/IO`.
 
 Important nuance: `common/DTO` is meant to decouple the UI from the logic model, but
 its converting constructors (`BoardView(const Board&)`, `PieceView(const Piece&)`,
@@ -186,6 +195,9 @@ directly. It holds `GameEngine&`, a `BoardMapper` (by value), `hasSelection`,
   frame rather than caching engine state itself; when animations are added, this same
   method is where in-motion positions would be exposed, with no change needed to the
   UI's call site.
+- `isGameOver() const` → forwards to `gameEngine.getGameState().isGameOver()`. Lets
+  `UI/GameLoop` decide when to stop the render loop without reaching past `Controller`
+  into `GameEngine` directly.
 
 `BoardMapper` (`logic/Controller/BoardMapper`) — `pixelToCell(int x, int y)` and an
 overload `pixelToCell(const PixelPosition&)`, both dividing by a hardcoded
@@ -223,19 +235,31 @@ vector of only occupied squares, which produced wrong results when combined with
 
 ## IO layer (`src/logic/IO/`)
 
+- `GameFactory::createNewGame()` — the production entry point for starting a game.
+  Returns a fully-populated `GameEngine` as a single prvalue (`return
+  GameEngine(GameState(createClassicBoard()));`) — deliberately not through a named
+  local, so C++17's *guaranteed* copy elision applies. This matters because
+  `GameEngine`'s `RuleEngine` member stores raw pointers to its own rule sub-objects
+  (see Rules section above); an actual copy/move of a `GameEngine` would leave those
+  pointers referring to the wrong object's memory. `createClassicBoard()` (private)
+  builds the standard starting position by directly constructing and placing all 32
+  `Piece` objects on an 8x8 `Board` — no string parsing involved.
 - `BoardParser::parse(text)` — static, parses whitespace-separated `<color><TYPE>`
   tokens (e.g. `wK`, `bQ`, `.` for empty) into a `Board`. Row width must be consistent
   or it throws. Piece IDs come from a process-global static counter (not reset per
   parse — fine for uniqueness, not reproducible across repeated parses in one run).
+  **Not used by `GameFactory`/the graphical executable** — text-based board setup is
+  kept as a REPL/testing convenience, deliberately separate from the production path,
+  and may be deprecated later.
 - `BoardPrinter::print(board)` — static, row-major space-separated `Piece::toString()`
   output, inverse of the parser's format.
 - `CommandProcessor::run()` — a stdin-driven REPL: reads board text until a
-  `"Commands:"` line, parses it, builds `GameState`/`GameEngine`/`Controller`, then
-  dispatches commands: `click x y`, `wait <ms>`, `print board`, `jump x y`. This is
-  the **only current code path that actually exercises the full logic stack
-  end-to-end**, but it's console/text-only — no OpenCV involved. Its entry point
-  (`src/tests/main.cpp`) is presently not attached to a CMake target (see Build
-  system).
+  `"Commands:"` line, parses it via `BoardParser`, builds `GameState`/`GameEngine`/
+  `Controller`, then dispatches commands: `click x y`, `wait <ms>`, `print board`,
+  `jump x y`. Still useful for exercising the logic stack from the console without
+  OpenCV, but no longer the only place that runs the full stack end-to-end now that
+  `UI/GameLoop` exists. Its entry point (`src/tests/main.cpp`) is presently not
+  attached to a CMake target (see Build system).
 
 Two on-disk data formats exist but are **not read by any current C++ code**:
 - `assets/pieces1/board.csv` — 8x8 CSV, `<TYPE><COLOR>` per cell (reverse order from
@@ -248,13 +272,24 @@ Two on-disk data formats exist but are **not read by any current C++ code**:
 
 - `Img` — RAII `cv::Mat` wrapper. `read()` loads via `cv::imread(..., IMREAD_UNCHANGED)`
   (preserves alpha). `draw_on()` alpha-blends a 4-channel image onto another at (x,y).
-  `show()` opens a blocking `cv::imshow` + `cv::waitKey(0)`.
-- `PixelPosition` — `{int x, y}`, pixel-space analog of `Position`.
+  `show()` is a pure drawing call — `cv::imshow(windowName(), img)` only, no
+  `cv::waitKey` and no return value. Pumping the window's event queue / reading a
+  keypress is deliberately **not** this class's job (see `GameLoop` below) —
+  `Img`/`BoardCanvas`/`Renderer` only ever produce pixels, never interpret input.
+  `windowName()` is a shared static constant (`"KungFuChess"`) so other code (namely
+  `GameLoop`, for `cv::setMouseCallback`) can address the same window `show()` draws to.
+- `PixelPosition` — moved to `common/PixelPosition` (see module map) — `{int x, y}`,
+  pixel-space analog of `Position`.
 - `CoordinateConverter` — cell→pixel via a duplicated `CELL_SIZE = 100`. **Currently
   unused** — `Renderer`/`BoardCanvas` do their own inline pixel math instead.
-- `BoardCanvas` — wraps the board background `Img` + `cellSize`. `getCellPosition(row,
-  col)` is yet another independent cell→pixel calculation. `drawPiece(img, row, col)`
-  composites a piece sprite onto the board image.
+- `BoardCanvas` — holds a pristine `background` `Img` (loaded once from the board
+  image) plus a `frame` `Img` (the actual draw buffer) and `cellSize`. `beginFrame()`
+  resets `frame = background` — this exists because `drawPiece` permanently blends
+  piece sprites into whatever image it's given; without resetting to a clean
+  background before each frame, pieces would leave visible trails as they move across
+  repeated `render()` calls in the live loop. `getCellPosition(row, col)` is yet
+  another independent cell→pixel calculation. `getWindowName()` forwards to
+  `Img::windowName()`.
 - `SpriteManager` — builds sprite file paths as
   `{assets}/{piecesFolder}/{TYPE}{COLOR}/states/{state}/sprites/{frame}.png` and loads
   them via `Img::read` on every call (its path-string cache does not cache decoded
@@ -264,35 +299,40 @@ Two on-disk data formats exist but are **not read by any current C++ code**:
   to load. `typeToString`'s default case and `colorToString`'s fallback also produce
   wrong-but-plausible values for `Empty`/`None` inputs rather than erroring (latent,
   since `Renderer` filters out `Empty` pieces before calling it).
-- `Renderer::render(const BoardView&)` — iterates all cells, skips `Empty`, always
-  requests **`PieceState::Idle`, frame `1`** regardless of the piece's actual state —
-  no animation, no cooldown visuals. Calls `canvas.show()` once at the end (a single
-  blocking frame, not a game loop).
+- `Renderer::render(const BoardView&)` — `canvas.beginFrame()`, then iterates all
+  cells, skips `Empty`, always requests **`PieceState::Idle`, frame `1`** regardless of
+  the piece's actual state — no animation, no cooldown visuals yet — then
+  `canvas.show()`. Purely a drawing operation: `void`, no return value, no awareness
+  that a "frame" is part of a loop or that input exists.
+- `GameLoop` (new) — the live game loop and the **only** place in `UI/` that touches
+  input or `logic/*`. Constructed with `Controller&`, `Renderer&`, `BoardCanvas&`.
+  `run()`: registers `cv::setMouseCallback` on `canvas.getWindowName()` once (a static
+  trampoline casts `void* userdata` back to `GameLoop*` and calls
+  `controller.handlePixelClick(PixelPosition(x, y))` on `EVENT_LBUTTONDOWN`), then
+  loops: measure wall-clock delta via `std::chrono::steady_clock` → `controller.wait(deltaMs)`
+  (this is what finally drives `GameEngine::advanceTime` off a real clock, instead of
+  only a REPL/test calling it manually) → `renderer.render(controller.getBoardView())`
+  → `cv::waitKey(1)` (owned here, not in `Renderer`/`Img`, since interpreting a keypress
+  is an input decision) → stops the loop on ESC or `controller.isGameOver()`.
 
-## Current state of integration — read this before adding features
+## Current state of integration
 
-The logic layer (rules, engine, real-time arbiter) and the rendering layer are
-**not connected**. Concretely:
+The logic layer is now wired into the graphical executable:
+`main.cpp` calls `GameFactory::createNewGame()` → `Controller` → constructs
+`BoardCanvas`/`SpriteManager`/`Renderer` → hands them plus the `Controller` to a
+`GameLoop` and calls `run()`. This is now the only entry point needed to play a game
+with a live board, mouse input, and real-time piece movement.
 
-- `src/main.cpp` (the real game executable) never instantiates `GameEngine`,
-  `Controller`, `RuleEngine`, `RealTimeArbiter`, or `BoardParser`. It hand-builds a
-  static classic starting position as a `BoardView` and renders **one frame**, then
-  the program ends after a blocking `waitKey`. There is no mouse/keyboard input
-  handling, no game loop, no repeated rendering.
-- The only place the full logic stack runs end-to-end is the text-only REPL
-  (`CommandProcessor` / `src/tests/main.cpp`), which has no rendering and (as of this
+What's still missing/rough:
+- No animation, no cooldown-state visuals — `Renderer` always draws `PieceState::Idle`
+  frame `1` (see gaps list). `SpriteManager::stateToString` also doesn't match the
+  on-disk folder names, so requesting a non-Idle sprite would fail if anything ever
+  asked for one.
+- No visual feedback for game-over — the loop just stops; nothing is drawn to signal
+  who won or that the window is about to close.
+- The text-only REPL (`CommandProcessor` / `src/tests/main.cpp`) still exists
+  side-by-side as a console-only way to exercise the logic stack, and (as of this
   review) isn't attached to a CMake build target.
-- Wiring these together requires at least: fixing `SpriteManager::stateToString` to
-  match on-disk folder names (or extending `PieceState`), adding a real game loop with
-  OpenCV input handling to `main.cpp` (mouse callback → `Controller::handlePixelClick`,
-  a repeated tick calling `Controller::wait` + `Controller::getBoardView` +
-  `Renderer::render`), and deciding how continuous real time should drive
-  `GameEngine::advanceTime` (there's no timer/thread anywhere yet). Note also that
-  `BoardCanvas::show()` currently calls a blocking `cv::waitKey(0)`, which would need
-  to become non-blocking (e.g. `cv::waitKey(1)`) for a real per-frame loop.
-  `Controller::handlePixelClick`/`getBoardView` (the UI-facing entry points described
-  in "Controller & command flow" above) already exist and are ready to be called from
-  such a loop.
 
 ## Testing (`src/tests/`)
 
@@ -307,7 +347,8 @@ for now that it's relied on by `Controller::getBoardView()`.
 
 ## Known gaps / things to be careful about when editing
 
-1. Logic layer isn't wired into the graphical executable (see above) — the biggest one.
+1. ~~Logic layer isn't wired into the graphical executable~~ — fixed: `GameFactory` +
+   `UI/GameLoop` now provide a live, playable loop (see "Current state of integration").
 2. ~~`BoardView(const Board&)` produces a wrongly-ordered/sparse vector~~ — fixed: it
    now builds a dense, row-major vector consistent with `getPiece(row, col)`'s indexing.
 3. `PieceState` enum (3 values) doesn't cover the on-disk cooldown states (`jump`,
@@ -338,8 +379,9 @@ for now that it's relied on by `Controller::getBoardView()`.
 | Change move/jump timing (cooldowns, speed) | `src/logic/Engine/GameEngine.cpp` (`MILLIS_PER_SQUARE`, `calculatePathLength`), `src/logic/Controller/RealTimeArbiter.cpp` |
 | Change what happens when a move completes (capture, promotion, game-over) | `GameEngine::executeMove` |
 | Change click/selection UX | `src/logic/Controller/Controller.cpp` |
-| Parse/print board text | `src/logic/IO/BoardParser.cpp` / `BoardPrinter.cpp` |
-| Add real GUI input + a live loop | `src/main.cpp` — currently absent, needs to be built from scratch, wiring a mouse callback → `Controller::handlePixelClick`, plus a repeated tick calling `Controller::wait` + `Controller::getBoardView` + `Renderer::render` |
+| Parse/print board text (REPL only, not production setup) | `src/logic/IO/BoardParser.cpp` / `BoardPrinter.cpp` |
+| Change the initial/starting board setup | `src/logic/IO/GameFactory.cpp` (`createClassicBoard`) |
+| Change the live loop, mouse handling, or when the game stops | `src/UI/GameLoop.cpp` |
 | Fix/extend sprite rendering | `src/UI/SpriteManager.cpp` (state-name mismatch), `src/UI/Renderer.cpp` (hardcoded Idle/frame 1) |
 | Change how pixel clicks map to board cells | `src/logic/Controller/BoardMapper.cpp`, fed via `Controller::handlePixelClick` |
 | Add/adjust tests | `src/tests/logic_tests/<matching-folder>/` |

@@ -7,7 +7,9 @@ Renderer::Renderer(BoardCanvas& canvas, SpriteManager& spriteManager)
     : canvas(canvas), spriteManager(spriteManager) {}
 
 void Renderer::render(const BoardView& snapshot) {
-    
+
+    canvas.beginFrame();
+
     for (int row = 0; row < snapshot.getRows(); ++row) {
         for (int col = 0; col < snapshot.getCols(); ++col) {
             PieceView piece = snapshot.getPiece(row, col);
