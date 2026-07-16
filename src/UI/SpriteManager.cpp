@@ -1,8 +1,8 @@
 #include "SpriteManager.h"
 #include <fstream>
 
-SpriteManager::SpriteManager(const std::string& assetsPath, const std::string& piecesFolder)
-    : assetsPath(assetsPath), piecesFolder(piecesFolder) {}
+SpriteManager::SpriteManager(const std::string& assetsPath, const std::string& piecesFolder, int spriteSize)
+    : assetsPath(assetsPath), piecesFolder(piecesFolder), spriteSize(spriteSize) {}
 
 // פונקציית עזר להמרה לטקסט לצורך בניית נתיב הקובץ
 std::string SpriteManager::typeToString(PieceType type) const {
@@ -47,7 +47,7 @@ Img SpriteManager::getPieceSprite(const PieceView& piece, PieceState state, int 
         spritePaths[key] = getPath(piece.getType(), piece.getColor(), state, frame);
     }
     Img img;
-    // ניסיון קריאה מהנתיב שנבנה
-    img.read(spritePaths[key]);
+    // ניסיון קריאה מהנתיב שנבנה, עם שינוי גודל לגודל תא הלוח
+    img.read(spritePaths[key], {spriteSize, spriteSize}, true);
     return img;
 }

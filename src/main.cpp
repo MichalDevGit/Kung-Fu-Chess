@@ -12,7 +12,7 @@ int main() {
         Controller controller(engine);
 
         BoardCanvas canvas("assets/board_classic.png", 100);
-        SpriteManager spriteManager("assets", "pieces2");
+        SpriteManager spriteManager("assets", "pieces3", 100);
         Renderer renderer(canvas, spriteManager);
 
         GameLoop gameLoop(controller, renderer, canvas);

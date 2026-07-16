@@ -13,6 +13,7 @@ class SpriteManager {
 private:
     std::string assetsPath;
     std::string piecesFolder;
+    int spriteSize;
     std::map<std::string, std::string> spritePaths;
 
     // פונקציה עזר פנימית לבניית נתיב
@@ -22,6 +23,6 @@ private:
     std::string stateToString(PieceState state) const;
 
 public:
-    SpriteManager(const std::string& assetsPath, const std::string& piecesFolder = "pieces2");
+    SpriteManager(const std::string& assetsPath, const std::string& piecesFolder = "pieces2", int spriteSize = 100);
     Img getPieceSprite(const PieceView& piece, PieceState state, int frame);
 };
