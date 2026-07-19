@@ -3,17 +3,20 @@
 Rest::Rest()
     : pieceId(-1),
       startTime(0),
-      endTime(0)
+      endTime(0),
+      kind(RestKind::Long)
 {
 }
 
 Rest::Rest(
     int pieceId,
     long long startTime,
-    long long endTime)
+    long long endTime,
+    RestKind kind)
     : pieceId(pieceId),
       startTime(startTime),
-      endTime(endTime)
+      endTime(endTime),
+      kind(kind)
 {
 }
 
@@ -30,6 +33,11 @@ long long Rest::getStartTime() const
 long long Rest::getEndTime() const
 {
     return endTime;
+}
+
+RestKind Rest::getKind() const
+{
+    return kind;
 }
 
 bool Rest::isFinished(long long currentTime) const

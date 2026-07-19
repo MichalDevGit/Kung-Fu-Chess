@@ -19,7 +19,7 @@ void Renderer::render(const GameView& gameView) {
                 continue;
             }
 
-            AnimationFrame::Resolution resolution = animationFrame.resolve(gameView, row, col);
+            AnimationFrame::Resolution resolution = animationFrame.resolve(gameView, row, col, piece.getId());
             Img sprite = spriteManager.getPieceSprite(piece, resolution.state, resolution.frame);
             canvas.drawPieceAtPixel(sprite, resolution.position);
         }
@@ -32,7 +32,7 @@ void Renderer::render(const GameView& gameView) {
 
     for (const RestView& rest : gameView.getRests()) {
         double progress = rest.getProgress(gameView.getCurrentTime());
-        canvas.drawRestProgress(rest.getPosition().getRow(), rest.getPosition().getCol(), progress);
+        canvas.drawRestProgress(rest.getPosition().getRow(), rest.getPosition().getCol(), progress, rest.getKind());
     }
 
     if (gameView.getHasSelection()) {

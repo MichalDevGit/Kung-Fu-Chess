@@ -53,7 +53,7 @@ public:
     bool shouldFinishCurrentJump() const;
 
 
-    void startRest(int pieceId, long long duration);
+    void startRest(int pieceId, long long duration, RestKind kind);
 
     bool isPieceResting(int pieceId) const;
 

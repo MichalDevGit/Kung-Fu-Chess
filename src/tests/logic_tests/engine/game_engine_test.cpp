@@ -85,7 +85,7 @@ TEST_CASE("Testing GameEngine flow") {
         CHECK(third.isValid == true);
     }
 
-    SUBCASE("Ambush capture does not put the defending piece to rest") {
+    SUBCASE("Ambush capture puts the defending piece into a short rest") {
         Piece defender(2, PieceType::Pawn, PieceColor::Black, Position(5, 3));
         board.addPiece(defender);
 
@@ -101,6 +101,34 @@ TEST_CASE("Testing GameEngine flow") {
 
         CHECK(engine.hasPieceAt(Position(6, 4)) == false); // mover was captured by the ambush
         CHECK(engine.hasPieceAt(Position(5, 3)) == true);  // defender still standing
-        CHECK(engine.isPieceResting(2) == false);          // defender must not be rested
+        CHECK(engine.isPieceResting(2) == true);           // defender rests briefly after ambushing
+
+        // Black pawns move toward increasing rows, so (6,3) is forward/legal.
+        MoveValidation duringRest = engine.requestMove(Position(5, 3), Position(6, 3));
+        CHECK(duringRest.isValid == false);
+        CHECK(duringRest.reason == MoveValidationReason::PieceResting);
+
+        // matches GameEngine::JUMP_REST_DURATION_MILLIS (private, referenced as
+        // a literal the same way REST_DURATION_MILLIS is above)
+        engine.advanceTime(1000);
+        CHECK(engine.isPieceResting(2) == false);
+    }
+
+    SUBCASE("Piece rests briefly after a jump expires without being triggered") {
+        GameState state(board);
+        GameEngine engine(state);
+
+        engine.requestJump(Position(6, 4));
+        engine.advanceTime(1000);
+
+        CHECK(engine.hasActiveJump() == false);
+        CHECK(engine.isPieceResting(1) == true);
+
+        MoveValidation duringRest = engine.requestMove(Position(6, 4), Position(5, 4));
+        CHECK(duringRest.isValid == false);
+        CHECK(duringRest.reason == MoveValidationReason::PieceResting);
+
+        engine.advanceTime(1000);
+        CHECK(engine.isPieceResting(1) == false);
     }
 }

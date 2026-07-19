@@ -5,6 +5,7 @@
 const cv::Scalar BoardCanvas::SELECTION_COLOR(0, 255, 255, 255);  // yellow
 const cv::Scalar BoardCanvas::JUMP_COLOR(255, 0, 255, 255);       // magenta
 const cv::Scalar BoardCanvas::REST_BAR_COLOR(0, 165, 255, 255);   // orange
+const cv::Scalar BoardCanvas::SHORT_REST_BAR_COLOR(0, 255, 0, 255); // green
 
 BoardCanvas::BoardCanvas(const std::string& boardPath, int cellSize)
     : background(boardPath), frame(background), cellSize(cellSize) {}
@@ -48,7 +49,7 @@ void BoardCanvas::drawJumpHighlight(int row, int col) {
     drawCellOutline(row, col, JUMP_COLOR, JUMP_THICKNESS);
 }
 
-void BoardCanvas::drawRestProgress(int row, int col, double progress) {
+void BoardCanvas::drawRestProgress(int row, int col, double progress, RestKind kind) {
     double clamped = std::min(1.0, std::max(0.0, progress));
     double remaining = 1.0 - clamped;  // bar shrinks as the rest counts down
 
@@ -56,7 +57,9 @@ void BoardCanvas::drawRestProgress(int row, int col, double progress) {
     int barWidth = static_cast<int>(cellSize * remaining);
     int barY = pos.getY() + cellSize - REST_BAR_HEIGHT;
 
-    frame.draw_rectangle(pos.getX(), barY, barWidth, REST_BAR_HEIGHT, REST_BAR_COLOR, cv::FILLED);
+    const cv::Scalar& color = (kind == RestKind::Short) ? SHORT_REST_BAR_COLOR : REST_BAR_COLOR;
+
+    frame.draw_rectangle(pos.getX(), barY, barWidth, REST_BAR_HEIGHT, color, cv::FILLED);
 }
 
 void BoardCanvas::show() { frame.show(); }

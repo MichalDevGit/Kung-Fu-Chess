@@ -11,8 +11,12 @@ private:
     static constexpr int JUMP_FRAME_COUNT = 5;
     static constexpr int MOVE_FRAME_COUNT = 5;
     static constexpr int LONG_REST_FRAME_COUNT = 5;
+    static constexpr int SHORT_REST_FRAME_COUNT = 5;
+    static constexpr int IDLE_FRAME_COUNT = 5;
+    static constexpr int IDLE_FRAMES_PER_SECOND = 6;
 
     static int frameIndexForProgress(double progress, int frameCount);
+    static int frameIndexForLoop(long long currentTime, int frameCount, int framesPerSecond, int phaseOffset);
 
 public:
     struct Resolution {
@@ -23,5 +27,5 @@ public:
 
     explicit AnimationFrame(const BoardCanvas& canvas);
 
-    Resolution resolve(const GameView& gameView, int row, int col) const;
+    Resolution resolve(const GameView& gameView, int row, int col, int pieceId) const;
 };

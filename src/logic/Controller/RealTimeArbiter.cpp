@@ -84,9 +84,9 @@ bool RealTimeArbiter::shouldFinishCurrentJump() const
            currentJump.isFinished(currentTime);
 }
 
-void RealTimeArbiter::startRest(int pieceId, long long duration)
+void RealTimeArbiter::startRest(int pieceId, long long duration, RestKind kind)
 {
-    restsByPieceId[pieceId] = Rest(pieceId, currentTime, currentTime + duration);
+    restsByPieceId[pieceId] = Rest(pieceId, currentTime, currentTime + duration, kind);
 }
 
 bool RealTimeArbiter::isPieceResting(int pieceId) const

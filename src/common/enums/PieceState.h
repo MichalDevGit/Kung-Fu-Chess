@@ -7,7 +7,8 @@ enum class PieceState
     Moving,
     Captured,
     Jump,
-    LongRest
+    LongRest,
+    ShortRest
 };
 
 #endif

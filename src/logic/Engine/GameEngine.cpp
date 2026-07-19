@@ -1,4 +1,5 @@
 #include "GameEngine.h"
+#include "../../common/enums/RestKind.h"
 
 GameEngine::GameEngine(const GameState& gameState)
     : gameState(gameState)
@@ -118,10 +119,14 @@ void GameEngine::executeMove(const Motion& motion)
                 movingPiece != nullptr &&
                 jumpingPiece->getColor() != movingPiece->getColor())
             {
+                int jumpingPieceId = jumpingPiece->getId();
+
                 getBoard().removePiece(motion.getFrom());
-    
+
                 arbiter.finishJump();
-    
+
+                arbiter.startRest(jumpingPieceId, JUMP_REST_DURATION_MILLIS, RestKind::Short);
+
                 return;
             }
         }
@@ -267,7 +272,7 @@ void GameEngine::settleCompletedMotions()
 
         if (moverAfter != nullptr && moverAfter->getPosition() == motion.getTo())
         {
-            arbiter.startRest(moverId, REST_DURATION_MILLIS);
+            arbiter.startRest(moverId, REST_DURATION_MILLIS, RestKind::Long);
         }
     }
 }
@@ -284,7 +289,17 @@ void GameEngine::settleCompletedJumps()
         return;
     }
 
+    const Jump jump = arbiter.getCurrentJump();
+
+    const Piece* jumpingPiece = getBoard().getPiece(jump.getPosition());
+    int jumpingPieceId = (jumpingPiece != nullptr) ? jumpingPiece->getId() : -1;
+
     arbiter.finishJump();
+
+    if (jumpingPieceId != -1)
+    {
+        arbiter.startRest(jumpingPieceId, JUMP_REST_DURATION_MILLIS, RestKind::Short);
+    }
 }
 
 void GameEngine::settleCompletedRests()

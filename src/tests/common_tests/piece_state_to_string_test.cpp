@@ -22,4 +22,8 @@ TEST_CASE("Testing pieceStateToString") {
     SUBCASE("LongRest maps to long_rest") {
         CHECK(pieceStateToString(PieceState::LongRest) == "long_rest");
     }
+
+    SUBCASE("ShortRest maps to short_rest") {
+        CHECK(pieceStateToString(PieceState::ShortRest) == "short_rest");
+    }
 }

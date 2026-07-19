@@ -117,7 +117,8 @@ GameView Controller::getGameView() const
                 rest.getPieceId(),
                 PositionView(piece->getPosition()),
                 rest.getStartTime(),
-                rest.getEndTime());
+                rest.getEndTime(),
+                rest.getKind());
         }
     }
 

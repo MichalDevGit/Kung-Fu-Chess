@@ -1,4 +1,5 @@
 #include "AnimationFrame.h"
+#include "../common/enums/RestKind.h"
 
 #include <algorithm>
 
@@ -10,7 +11,13 @@ int AnimationFrame::frameIndexForProgress(double progress, int frameCount) {
     return std::min(frameCount, index);  // non-looping: holds on the last frame
 }
 
-AnimationFrame::Resolution AnimationFrame::resolve(const GameView& gameView, int row, int col) const {
+int AnimationFrame::frameIndexForLoop(long long currentTime, int frameCount, int framesPerSecond, int phaseOffset) {
+    long long msPerFrame = 1000 / framesPerSecond;
+    long long frameIndex = (currentTime / msPerFrame) + phaseOffset;
+    return static_cast<int>(frameIndex % frameCount) + 1;  // looping: cycles forever
+}
+
+AnimationFrame::Resolution AnimationFrame::resolve(const GameView& gameView, int row, int col, int pieceId) const {
     const MotionView& motion = gameView.getMotion();
     if (motion.isActive() &&
         motion.getFrom().getRow() == row &&
@@ -34,13 +41,18 @@ AnimationFrame::Resolution AnimationFrame::resolve(const GameView& gameView, int
     for (const RestView& rest : gameView.getRests()) {
         if (rest.getPosition().getRow() == row &&
             rest.getPosition().getCol() == col) {
+            bool isShortRest = rest.getKind() == RestKind::Short;
             double progress = rest.getProgress(gameView.getCurrentTime());
-            int frame = frameIndexForProgress(progress, LONG_REST_FRAME_COUNT);
+            int frame = frameIndexForProgress(
+                progress,
+                isShortRest ? SHORT_REST_FRAME_COUNT : LONG_REST_FRAME_COUNT);
             PixelPosition position = canvas.getCellPosition(row, col);
-            return Resolution{PieceState::LongRest, frame, position};
+            PieceState state = isShortRest ? PieceState::ShortRest : PieceState::LongRest;
+            return Resolution{state, frame, position};
         }
     }
 
     PixelPosition position = canvas.getCellPosition(row, col);
-    return Resolution{PieceState::Idle, 1, position};
+    int frame = frameIndexForLoop(gameView.getCurrentTime(), IDLE_FRAME_COUNT, IDLE_FRAMES_PER_SECOND, pieceId);
+    return Resolution{PieceState::Idle, frame, position};
 }

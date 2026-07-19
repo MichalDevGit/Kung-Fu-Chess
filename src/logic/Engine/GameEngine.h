@@ -18,6 +18,7 @@ private:
     RealTimeArbiter arbiter;
     static constexpr long long MILLIS_PER_SQUARE = 1000;
     static constexpr long long REST_DURATION_MILLIS = 2000;
+    static constexpr long long JUMP_REST_DURATION_MILLIS = 1000;
 
     Board& getBoard();
 

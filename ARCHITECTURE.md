@@ -6,7 +6,7 @@ eventually look. Read this before exploring the source tree — it should make a
 re-read of `src/` unnecessary for most tasks. If you change the architecture in a way
 that makes a section below wrong, update that section in the same change.
 
-Last reviewed: 2026-07-19, against the source tree as of commit `02cd0a6`, updated to
+Last reviewed: 2026-07-19, against the source tree as of commit `991852d`, updated to
 reflect: per-piece post-move `Rest` in `RealTimeArbiter`/`GameEngine`; the new
 `GameView` aggregate DTO (which **replaces** `Controller::getBoardView()`) carrying
 `MotionView`/`JumpView`/`RestView`/selection/current-time snapshots to the UI; the
@@ -16,14 +16,20 @@ fourth `PieceState::Jump` value with a real sprite-based jump animation (not jus
 overlay highlight), driven by the new `UI/AnimationFrame` collaborator; and the new
 `common/enums/PieceStateToString.h` free function that centralizes the
 `PieceState`-to-sprite-folder-name mapping (used by `SpriteManager`). Also updated to
-reflect a fifth `PieceState::LongRest` value: `AnimationFrame::resolve` now checks
-`GameView::getRests()` and returns a real `long_rest` sprite animation (5 frames,
-non-looping, same `frameIndexForProgress` helper as `Jump`) for any square with an
-active `Rest`, instead of that square just falling through to `Idle`. Deliberately
-**not** done as part of this: no `short_rest` sprite, and no new rest/cooldown after a
-`Jump` — `Jump` completion still doesn't start a `Rest` at all (see Real-time
-mechanics section), so `short_rest` remains unused; wiring that up would be a new
-gameplay mechanic, not just a rendering change, and was explicitly scoped out.
+reflect a fifth `PieceState::LongRest` value, and, most recently, a sixth
+`PieceState::ShortRest` value plus a new `common/enums/RestKind.h` (`Long`/`Short`)
+that `Rest`/`RestView` now carry so post-*move* and post-*jump* cooldowns can be told
+apart even though both live in the same `RealTimeArbiter::restsByPieceId` map keyed
+only by piece id: `GameEngine` now starts a `RestKind::Short` rest
+(`JUMP_REST_DURATION_MILLIS = 1000`) for a piece both when its `Jump` times out
+naturally (`settleCompletedJumps`) and when its `Jump` is consumed early by a
+successful ambush-capture (the special case inside `executeMove`) — previously
+neither path started any rest at all. `AnimationFrame::resolve` branches on
+`RestView::getKind()` to pick `PieceState::LongRest` vs `PieceState::ShortRest` (each
+its own real sprite animation, 5 frames, non-looping, same `frameIndexForProgress`
+helper as `Jump`), and `BoardCanvas::drawRestProgress` takes a `RestKind` to pick a
+visually distinct bar color (`REST_BAR_COLOR` orange for `Long`,
+`SHORT_REST_BAR_COLOR` green for `Short`) alongside the sprite difference.
 
 ## What this project is
 
@@ -106,13 +112,18 @@ independent of rendering) does hold in that direction.
 - **`Jump`** — same shape as `Motion` but for a stationary "jump" ability: `{bool
   active; Position position; long long startTime, endTime;}`. Represents a temporary
   ambush/counter window at a single square, not a move.
-- **`Rest`** — `{int pieceId; long long startTime, endTime;}`. Represents a
-  per-piece "just moved, can't move/jump again yet" cooldown. Unlike `Motion`/
-  `Jump`, it's keyed by **piece id**, not `Position` (a piece stays put while
-  resting, so identity — not square — is what a `requestMove`/`requestJump` guard
-  needs to check), and it has no `active` flag: it lives in `RealTimeArbiter`'s
+- **`Rest`** — `{int pieceId; long long startTime, endTime; RestKind kind;}`.
+  Represents a per-piece "just moved/jumped, can't move/jump again yet" cooldown.
+  Unlike `Motion`/`Jump`, it's keyed by **piece id**, not `Position` (a piece stays put
+  while resting, so identity — not square — is what a `requestMove`/`requestJump`
+  guard needs to check), and it has no `active` flag: it lives in `RealTimeArbiter`'s
   `std::map<int, Rest>`, where map presence is itself the "active" signal. Lives in
-  `RealTimeArbiter`, not `Board` — same ownership split as `Motion`/`Jump`.
+  `RealTimeArbiter`, not `Board` — same ownership split as `Motion`/`Jump`. `RestKind`
+  (`common/enums/RestKind.h`, `Long`/`Short`) is what lets a single `Rest` per piece
+  represent either a post-*move* cooldown or a post-*jump* cooldown — a piece can only
+  ever be resting one way at a time (both `requestMove`/`requestJump` reject outright
+  while any rest is active), so one map entry with a kind tag is enough; there's no
+  need to track both kinds simultaneously per piece.
 - **`Piece`** — `{int id; PieceType type; PieceColor color; PieceState state;
   Position position;}`. `operator==`/`!=` compare **only by id**. `state` exists and
   is settable (`setState`), but no production code ever calls `setState` — see Gaps.
@@ -151,15 +162,15 @@ dispatch to the right rule → membership in `legalDestinations()`, returning a
 
 ## Real-time ("kung fu") mechanics
 
-`PieceState` (`common/enums/PieceState.h`) has 5 values: `Idle, Moving, Captured,
-Jump, LongRest`. This still does **not** fully match the on-disk sprite state folders
-(`idle/move/jump/short_rest/long_rest` — see UI section: `Captured` maps to
-`"captured"`, which has **no on-disk folder at all** — deliberately unimplemented,
-see Gaps; `Idle`/`Moving`/`Jump`/`LongRest` all map correctly to
-`"idle"`/`"move"`/`"jump"`/`"long_rest"`), and no production code calls
+`PieceState` (`common/enums/PieceState.h`) has 6 values: `Idle, Moving, Captured,
+Jump, LongRest, ShortRest`. This still does **not** fully match the on-disk sprite
+state folders (`idle/move/jump/short_rest/long_rest` — see UI section: `Captured` maps
+to `"captured"`, which has **no on-disk folder at all** — deliberately unimplemented,
+see Gaps; `Idle`/`Moving`/`Jump`/`LongRest`/`ShortRest` all map correctly to
+`"idle"`/`"move"`/`"jump"`/`"long_rest"`/`"short_rest"`), and no production code calls
 `Piece::setState` at all — `Piece.state` itself is still never mutated. The
-`Jump`/`LongRest` sprite states *are* now driven in the live render loop, but — same
-as `Motion` before them — via `UI/AnimationFrame` reading `GameView`'s
+`Jump`/`LongRest`/`ShortRest` sprite states *are* now driven in the live render loop,
+but — same as `Motion` before them — via `UI/AnimationFrame` reading `GameView`'s
 `JumpView`/`RestView`s directly, not via `Piece.state`.
 
 `RealTimeArbiter` (`logic/Controller/RealTimeArbiter`) is a scheduler with a manually
@@ -177,45 +188,56 @@ independent cooldown.
   `pathLength` depends on piece type (King/Knight = 1; Pawn/Bishop = row distance;
   Rook = Manhattan distance; Queen = Manhattan if straight else row distance).
 - `REST_DURATION_MILLIS = 2000` — after a piece finishes a move (see
-  `settleCompletedMotions` below), that specific piece is put into a `Rest` for this
-  long, during which `requestMove`/`requestJump` reject it specifically with
+  `settleCompletedMotions` below), that specific piece is put into a `RestKind::Long`
+  `Rest` for this long. `JUMP_REST_DURATION_MILLIS = 1000` — after a piece's `Jump`
+  ends, for *either* reason (natural timeout in `settleCompletedJumps`, or being
+  consumed early by a successful ambush-capture inside `executeMove`), that piece is
+  put into a `RestKind::Short` `Rest` for this long instead. Either kind of active
+  rest makes `requestMove`/`requestJump` reject that piece specifically with
   `MoveValidationReason::PieceResting` (checked *after* the existing global
   `MoveAlreadyInProgress`/rule-validation/existence gates, right before the
   state-mutating call — same "global gates first, piece-specific gates last"
   ordering in both methods). This is a **per-piece** lock layered on top of the
   still-unchanged single-global-`Motion`/`Jump` exclusivity below — it closes part
   of gap #5 (per-piece rest specifically), not gap #5 as a whole; only one piece can
-  still be *traveling* at a time board-wide.
+  still be *traveling*/*jumping* at a time board-wide.
 - `requestMove(from, to)` — rejects if game over, a motion is already in progress, or
-  (once validation and the piece lookup both succeed) the piece is resting;
-  otherwise validates via `RuleEngine` and starts a `Motion` in the arbiter. **No
-  board mutation happens at request time.**
+  (once validation and the piece lookup both succeed) the piece is resting (either
+  kind); otherwise validates via `RuleEngine` and starts a `Motion` in the arbiter.
+  **No board mutation happens at request time.**
 - `requestJump(position)` — same guards (plus the same resting check, ordered after
   `hasActiveJump()`), starts a `Jump` of duration `MILLIS_PER_SQUARE` at the piece's
   own square. Doesn't move the piece; models a temporary ambush/counter window.
-- `executeMove(motion)` — runs when a motion *completes* (not when requested), and is
-  **not** aware of `Rest` at all (rest scheduling is a settlement-timing concern that
-  belongs in `settleCompletedMotions`, not in the pure board-mutation function):
+- `executeMove(motion)` — runs when a motion *completes* (not when requested):
   - Special case: if a `Jump` is active at the motion's destination and the mover is
-    the opposite color of the jumping piece, the **mover gets captured** (removed) and
-    the jump is consumed — the move itself doesn't happen. This is how "jump" acts as
-    an ambush/counter mechanic.
+    the opposite color of the jumping piece, the **mover gets captured** (removed), the
+    jump is consumed, and the defending (jumping) piece is put into a
+    `RestKind::Short` rest (`arbiter.startRest(jumpingPieceId, JUMP_REST_DURATION_MILLIS,
+    RestKind::Short)`, called with the id captured *before* `getBoard().removePiece`
+    runs, since removing the mover can shift `Board`'s internal vector and invalidate
+    pointers into it) — the move itself doesn't happen. This is how "jump" acts as an
+    ambush/counter mechanic, and successfully ambushing now costs the defender a brief
+    rest just like completing an ordinary move or jump does.
   - Otherwise: capture whatever occupies the destination (game-over if it was a King),
     `board.movePiece(from, to)`, then check pawn promotion (reaching the far row →
-    `setType(Queen)`).
+    `setType(Queen)`). This branch still isn't aware of post-*move* `Rest` scheduling
+    (that's `settleCompletedMotions`' job, not this pure board-mutation function).
 - `advanceTime(ms)` — advances the arbiter's clock, then settles any motion/jump whose
-  `endTime` has passed (`settleCompletedMotions` calls `executeMove` +
-  `finishMotion`; `settleCompletedJumps` just deactivates — the jump's actual capture
-  effect is checked eagerly inside a *different* motion's `executeMove`, not here),
-  then `settleCompletedRests()` (purges any `Rest` whose `endTime` has passed).
-  `settleCompletedMotions` captures the mover's id from `motion.getFrom()` **before**
-  calling `executeMove`, then re-looks it up by id (`Board::getPieceById`)
-  *afterward* and only starts a `Rest` for it if it's still alive **and** now sitting
-  at `motion.getTo()`. This matters: in the ambush-capture special case above, the
-  *mover* is removed but the *defending* piece is left standing at that square —
-  naively checking "is there a piece at `motion.getTo()`?" after `executeMove` would
-  find the defender and incorrectly put *it* to rest for successfully defending.
-  Keying the lookup by the mover's id specifically avoids that.
+  `endTime` has passed (`settleCompletedMotions` calls `executeMove` + `finishMotion`
+  then starts a `RestKind::Long` rest as described below; `settleCompletedJumps`
+  resolves the piece id at the jump's position **before** calling `finishJump()`, then
+  starts a `RestKind::Short` rest for it — this is the natural-timeout counterpart to
+  the ambush-capture case above; between the two, every way a `Jump` can end now
+  results in a short rest for the piece that was jumping), then `settleCompletedRests()`
+  (purges any `Rest` whose `endTime` has passed). `settleCompletedMotions` captures the
+  mover's id from `motion.getFrom()` **before** calling `executeMove`, then re-looks it
+  up by id (`Board::getPieceById`) *afterward* and only starts a `Rest` for it if it's
+  still alive **and** now sitting at `motion.getTo()`. This matters: in the
+  ambush-capture special case above, the *mover* is removed but the *defending* piece
+  is left standing at that square — naively checking "is there a piece at
+  `motion.getTo()`?" after `executeMove` would find the defender and incorrectly put
+  *it* to rest a second time (with the wrong kind/duration) for successfully
+  defending. Keying the lookup by the mover's id specifically avoids that.
 
 There is currently no code path that calls `advanceTime` on a real clock/timer — time
 only moves forward when a caller (the REPL's `wait <ms>` command, or a test) asks it
@@ -383,12 +405,15 @@ Two on-disk data formats exist but are **not read by any current C++ code**:
   `drawJumpHighlight(row, col)` both go through a private `drawCellOutline(row, col,
   color, thickness)` helper (different named `static const cv::Scalar`/`static
   constexpr int` colors/thicknesses so the two are visually distinct).
-  `drawRestProgress(row, col, progress)` draws a filled bar along the cell's bottom
-  edge whose width **shrinks** as the rest counts down (`cellSize * (1 -
+  `drawRestProgress(row, col, progress, kind)` draws a filled bar along the cell's
+  bottom edge whose width **shrinks** as the rest counts down (`cellSize * (1 -
   progress)`) — `getProgress()`'s elapsed-fraction convention is inverted to a
   remaining-time convention here, in `BoardCanvas`, not baked into `RestView`, since
   `MotionView`/`JumpView` need the elapsed-fraction semantics as-is for
-  interpolation. `getWindowName()` forwards to `Img::windowName()`.
+  interpolation. The `RestKind kind` parameter picks the bar color
+  (`REST_BAR_COLOR` orange for `Long`, `SHORT_REST_BAR_COLOR` green for `Short`) —
+  same `drawCellOutline`-style "one primitive, per-kind color constant" pattern as
+  the selection/jump highlights. `getWindowName()` forwards to `Img::windowName()`.
 - `SpriteManager` — builds sprite file paths as
   `{assets}/{piecesFolder}/{TYPE}{COLOR}/states/{state}/sprites/{frame}.png`.
   `getPieceSprite` caches **decoded** `Img`s in `spriteCache` (keyed by
@@ -412,8 +437,10 @@ Two on-disk data formats exist but are **not read by any current C++ code**:
   `Empty` pieces before calling it).
 - `AnimationFrame` — a small UI-layer collaborator (constructed with a `const
   BoardCanvas&`) that is the **only** place deciding, per board square, what to
-  render: `resolve(const GameView&, row, col)` returns a `Resolution{PieceState
-  state; int frame; PixelPosition position;}`. It checks whether that square is the
+  render: `resolve(const GameView&, row, col, pieceId)` returns a `Resolution{PieceState
+  state; int frame; PixelPosition position;}` (`pieceId` — supplied by `Renderer` from
+  the `PieceView` it already looked up for that square — is only used by the `Idle`
+  fallback below, to phase-offset that piece's looping animation). It checks whether that square is the
   `from` of an active `Motion` (→ `PieceState::Idle`, frame `1`, interpolated pixel
   position via `canvas.getInterpolatedPosition`) or the position of an active `Jump`
   (→ `PieceState::Jump`, a frame computed from `jump.getProgress(currentTime)` via a
@@ -421,29 +448,41 @@ Two on-disk data formats exist but are **not read by any current C++ code**:
   `frameCount = 5` to match the on-disk sprite count, since no JSON parsing exists yet
   to read it from `config.json`, same MVP simplification as the rest of the codebase —
   and `canvas.getCellPosition(row, col)`), or the position of any `RestView` in
-  `gameView.getRests()` (→ `PieceState::LongRest`, a frame computed the same way from
+  `gameView.getRests()` (→ `rest.getKind()` picks `PieceState::LongRest` or
+  `PieceState::ShortRest`, a frame computed the same way from
   `rest.getProgress(currentTime)` via the same `frameIndexForProgress` helper —
-  `LONG_REST_FRAME_COUNT = 5`, matching the on-disk `long_rest` sprite count — and
-  `canvas.getCellPosition(row, col)`), or neither of the above (→ `PieceState::Idle`,
-  frame `1`, `canvas.getCellPosition(row, col)`). The rest check is a linear scan over
+  `LONG_REST_FRAME_COUNT`/`SHORT_REST_FRAME_COUNT`, both `5` to match the on-disk
+  `long_rest`/`short_rest` sprite counts — and `canvas.getCellPosition(row, col)`), or
+  neither of the above (→ `PieceState::Idle`, a real **looping** animation via a second
+  private helper, `frameIndexForLoop(currentTime, frameCount, framesPerSecond,
+  phaseOffset)` — unlike `frameIndexForProgress`, this one has no start/end and
+  never holds on a last frame: it derives the frame purely from
+  `gameView.getCurrentTime()` and cycles forever, `IDLE_FRAME_COUNT = 5` /
+  `IDLE_FRAMES_PER_SECOND = 6` matching the on-disk `idle/config.json`
+  (`is_loop: true`, `frames_per_sec: 6`), same hardcoded-since-no-JSON-parsing
+  simplification as the other frame counts. `phaseOffset` is the square's `pieceId`,
+  so idle pieces don't all animate in lockstep — each piece's loop is shifted by its
+  own id before the modulo, `canvas.getCellPosition(row, col)`). The rest check is a linear scan over
   `gameView.getRests()` per square (fine at board scale) and is checked *after*
   Motion/Jump and *before* the final `Idle` fallback — a resting piece is never also
-  an active Motion/Jump target, since `Rest` only starts once `settleCompletedMotions`
-  has already deactivated the motion for that piece. This is what makes the
-  jumping-piece and resting-piece sprite animations possible; `BoardCanvas` still owns
-  the actual pixel arithmetic
+  an active Motion/Jump target, since a `Rest` (of either kind) only starts once
+  `settleCompletedMotions`/`settleCompletedJumps`/the ambush branch of `executeMove`
+  has already deactivated the motion/jump for that piece. This is what makes the
+  jumping-piece and resting-piece (both kinds) sprite animations possible; `BoardCanvas`
+  still owns the actual pixel arithmetic
   (`AnimationFrame` only decides *which* `BoardCanvas` method's result to use), and
   `SpriteManager` still owns turning `(PieceView, PieceState, frame)` into an `Img`.
 - `Renderer::render(const GameView&)` — `canvas.beginFrame()`, then: iterates all
   cells, skips `Empty` squares, and for every occupied square asks
-  `AnimationFrame::resolve(gameView, row, col)` for the `{state, frame, position}` to
+  `AnimationFrame::resolve(gameView, row, col, piece.getId())` for the `{state, frame, position}` to
   draw, fetches that sprite from `SpriteManager`, and draws it at that pixel position
   via `canvas.drawPieceAtPixel`. `Renderer` itself no longer contains any
   motion/jump-specific branching (no more "skip this cell, it's drawn separately
   below" special case) — that decision now lives entirely in `AnimationFrame`. After
   the per-square loop: if a jump is active, draws a jump highlight at its position;
-  draws a rest-progress bar for every `RestView` in the snapshot; if there's a
-  selection, draws a selection highlight; finally `canvas.show()`. Purely a drawing
+  draws a rest-progress bar (color chosen by `rest.getKind()`) for every `RestView` in
+  the snapshot; if there's a selection, draws a selection highlight; finally
+  `canvas.show()`. Purely a drawing
   operation: `void`, no return value, no awareness that a "frame" is part of a loop or
   that input exists.
 - `GameLoop` — the live game loop and the **only** place in `UI/` that touches
@@ -469,17 +508,21 @@ The logic layer is now wired into the graphical executable:
 needed to play a game with a live board, mouse input, and real-time piece movement.
 
 What's still missing/rough:
-- **Sprite-level animation exists for `Jump` and the post-move `Rest`, not yet for
-  `Captured`** — `AnimationFrame` swaps to the real `PieceState::Jump`/`LongRest`
-  sprite frames (5 frames each, non-looping) while a jump/rest is active. `Motion`
-  (traveling pieces) still renders via `PieceState::Moving` sprite frames plus
-  `BoardCanvas::getInterpolatedPosition` for the actual pixel movement; the rest
-  cooldown additionally keeps its `BoardCanvas` progress-bar overlay *alongside* the
-  new `LongRest` sprite (deliberate — the sprite holds on its last frame for the
-  whole rest per `long_rest/config.json`'s `is_loop: false`, so the bar is still the
-  only thing conveying *how much longer*). `Captured` has no on-disk sprite folder at
-  all and is not rendered by `AnimationFrame` — see gaps list; adding it would require
-  new art assets, not just code.
+- **Sprite-level animation exists for `Jump` and both rest kinds, not yet for
+  `Captured`** — `AnimationFrame` swaps to the real
+  `PieceState::Jump`/`LongRest`/`ShortRest` sprite frames (5 frames each, non-looping)
+  while a jump/rest is active, and a post-jump `Rest` is now started in every case a
+  `Jump` can end (natural timeout, or being consumed by an ambush-capture) — see
+  Real-time mechanics section. `Motion` (traveling pieces) still renders via
+  `PieceState::Moving` sprite frames plus `BoardCanvas::getInterpolatedPosition` for
+  the actual pixel movement; both rest cooldowns additionally keep their `BoardCanvas`
+  progress-bar overlay *alongside* their sprite (deliberate — the sprite holds on its
+  last frame for the whole rest per `long_rest`/`short_rest`'s `config.json`
+  `is_loop: false`, so the bar is still the only thing conveying *how much longer*; the
+  two kinds' bars are drawn in different colors so they're distinguishable at a
+  glance). `Captured` has no on-disk sprite folder at all and is not rendered by
+  `AnimationFrame` — see gaps list; adding it would require new art assets, not just
+  code.
 - No visual feedback for game-over — the loop just stops; nothing is drawn to signal
   who won or that the window is about to close.
 - The text-only REPL (`CommandProcessor` / `src/tests/main.cpp`) still exists
@@ -503,23 +546,26 @@ for now that it's relied on by `Controller::getBoardView()`.
    `UI/GameLoop` now provide a live, playable loop (see "Current state of integration").
 2. ~~`BoardView(const Board&)` produces a wrongly-ordered/sparse vector~~ — fixed: it
    now builds a dense, row-major vector consistent with `getPiece(row, col)`'s indexing.
-3. `PieceState` enum (5 values: `Idle, Moving, Captured, Jump, LongRest`) still
-   doesn't cover the on-disk `short_rest` cooldown state (only the post-*move* rest
-   is wired up as `LongRest`; nothing currently starts a `Rest` after a `Jump`, see
-   gap #5's note and the Real-time mechanics section, so `short_rest` stays unused).
-   `Captured` also has no backing on-disk sprite folder at all — `pieceStateToString`
-   maps it to `"captured"` regardless, but no code path ever requests it, so this is
-   latent rather than an active bug. `Idle`/`Moving`/`Jump`/`LongRest` all map to
+3. ~~`PieceState` enum doesn't cover the on-disk `short_rest` cooldown state~~ —
+   fixed: `PieceState` now has 6 values (`Idle, Moving, Captured, Jump, LongRest,
+   ShortRest`), `Rest`/`RestView` carry a `RestKind` so `AnimationFrame` can tell a
+   post-move rest from a post-jump rest apart, and `GameEngine` starts a
+   `RestKind::Short` rest both when a `Jump` times out naturally and when it's
+   consumed by an ambush-capture (see Real-time mechanics section). `Captured` still
+   has no backing on-disk sprite folder at all — `pieceStateToString` maps it to
+   `"captured"` regardless, but no code path ever requests it, so this remains latent
+   rather than an active bug. `Idle`/`Moving`/`Jump`/`LongRest`/`ShortRest` all map to
    correct, existing on-disk folder names.
 4. `Piece::setState` is never called outside tests — no production code marks a piece
    as `Moving`/`Captured`.
 5. `RealTimeArbiter` supports only one in-flight motion/jump globally, not per-piece —
    a deliberate MVP simplification worth knowing about before extending it.
-   **Partially addressed for post-move cooldowns**: `Rest` *is* per-piece (keyed by
-   piece id, independent per piece, doesn't block other pieces), so multiple pieces
-   can be resting simultaneously. The `Motion`/`Jump` themselves are still
-   single-global exactly as before — only one piece can be *traveling*/*jumping* at
-   a time board-wide; this gap is not fixed for those.
+   **Partially addressed for post-move/post-jump cooldowns**: `Rest` *is* per-piece
+   (keyed by piece id, independent per piece, doesn't block other pieces), so
+   multiple pieces can be resting (either `RestKind::Long` or `RestKind::Short`)
+   simultaneously. The `Motion`/`Jump` themselves are still single-global exactly as
+   before — only one piece can be *traveling*/*jumping* at a time board-wide; this
+   gap is not fixed for those.
 6. Cell-pixel size (`100`) is hardcoded independently in three places
    (`BoardMapper`, `CoordinateConverter`, `BoardCanvas`'s constructor arg in
    `main.cpp`) with no shared constant.
@@ -538,7 +584,7 @@ for now that it's relied on by `Controller::getBoardView()`.
 |---|---|
 | Change/add a piece's movement rule | `src/logic/rules/<Piece>Rule.cpp`, registered in `RuleEngine`'s constructor |
 | Change move/jump timing (cooldowns, speed) | `src/logic/Engine/GameEngine.cpp` (`MILLIS_PER_SQUARE`, `calculatePathLength`), `src/logic/Controller/RealTimeArbiter.cpp` |
-| Change the post-move rest/cooldown duration or its guard | `src/logic/Engine/GameEngine.cpp` (`REST_DURATION_MILLIS`, `settleCompletedMotions`, the `isPieceResting` checks in `requestMove`/`requestJump`), `src/logic/Controller/RealTimeArbiter.cpp` (`startRest`/`isPieceResting`/`getActiveRests`/`purgeExpiredRests`) |
+| Change the post-move (`RestKind::Long`) or post-jump (`RestKind::Short`) rest/cooldown duration or its guard | `src/logic/Engine/GameEngine.cpp` (`REST_DURATION_MILLIS`/`JUMP_REST_DURATION_MILLIS`, `settleCompletedMotions`/`settleCompletedJumps`/the ambush branch of `executeMove`, the `isPieceResting` checks in `requestMove`/`requestJump`), `src/logic/Controller/RealTimeArbiter.cpp` (`startRest`/`isPieceResting`/`getActiveRests`/`purgeExpiredRests`) |
 | Change what happens when a move completes (capture, promotion, game-over) | `GameEngine::executeMove` |
 | Change click/selection UX | `src/logic/Controller/Controller.cpp` |
 | Parse/print board text (REPL only, not production setup) | `src/logic/IO/BoardParser.cpp` / `BoardPrinter.cpp` |

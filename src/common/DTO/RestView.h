@@ -2,6 +2,7 @@
 #define REST_VIEW_H
 
 #include "PositionView.h"
+#include "../enums/RestKind.h"
 
 class RestView
 {
@@ -10,6 +11,7 @@ private:
     PositionView position;
     long long startTime;
     long long endTime;
+    RestKind kind;
 
 public:
     RestView();
@@ -17,7 +19,8 @@ public:
     RestView(int pieceId,
              const PositionView& position,
              long long startTime,
-             long long endTime);
+             long long endTime,
+             RestKind kind);
 
     int getPieceId() const;
 
@@ -25,6 +28,8 @@ public:
 
     long long getStartTime() const;
     long long getEndTime() const;
+
+    RestKind getKind() const;
 
     double getProgress(long long currentTime) const;
 };

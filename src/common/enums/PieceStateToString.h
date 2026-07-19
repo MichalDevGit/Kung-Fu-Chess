@@ -13,6 +13,7 @@ inline std::string pieceStateToString(PieceState state)
         case PieceState::Captured: return "captured";
         case PieceState::Jump:     return "jump";
         case PieceState::LongRest: return "long_rest";
+        case PieceState::ShortRest: return "short_rest";
         default:                   return "idle";
     }
 }

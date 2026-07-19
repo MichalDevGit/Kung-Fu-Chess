@@ -2,6 +2,7 @@
 #include "img.h"
 #include "../common/PixelPosition.h"
 #include "../common/DTO/PositionView.h"
+#include "../common/enums/RestKind.h"
 
 class BoardCanvas {
 private:
@@ -14,6 +15,7 @@ private:
     static const cv::Scalar SELECTION_COLOR;
     static const cv::Scalar JUMP_COLOR;
     static const cv::Scalar REST_BAR_COLOR;
+    static const cv::Scalar SHORT_REST_BAR_COLOR;
     static constexpr int SELECTION_THICKNESS = 4;
     static constexpr int JUMP_THICKNESS = 4;
     static constexpr int REST_BAR_HEIGHT = 10;
@@ -30,5 +32,5 @@ public:
     PixelPosition getInterpolatedPosition(const PositionView& from, const PositionView& to, double progress) const;
     void drawSelectionHighlight(int row, int col);
     void drawJumpHighlight(int row, int col);
-    void drawRestProgress(int row, int col, double progress);
+    void drawRestProgress(int row, int col, double progress, RestKind kind);
 };
