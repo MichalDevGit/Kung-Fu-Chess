@@ -16,8 +16,9 @@ AnimationFrame::Resolution AnimationFrame::resolve(const GameView& gameView, int
         motion.getFrom().getRow() == row &&
         motion.getFrom().getCol() == col) {
         double progress = motion.getProgress(gameView.getCurrentTime());
+        int frame = frameIndexForProgress(progress, MOVE_FRAME_COUNT);
         PixelPosition position = canvas.getInterpolatedPosition(motion.getFrom(), motion.getTo(), progress);
-        return Resolution{PieceState::Idle, 1, position};
+        return Resolution{PieceState::Moving, frame, position};
     }
 
     const JumpView& jump = gameView.getJump();
@@ -28,6 +29,16 @@ AnimationFrame::Resolution AnimationFrame::resolve(const GameView& gameView, int
         int frame = frameIndexForProgress(progress, JUMP_FRAME_COUNT);
         PixelPosition position = canvas.getCellPosition(row, col);
         return Resolution{PieceState::Jump, frame, position};
+    }
+
+    for (const RestView& rest : gameView.getRests()) {
+        if (rest.getPosition().getRow() == row &&
+            rest.getPosition().getCol() == col) {
+            double progress = rest.getProgress(gameView.getCurrentTime());
+            int frame = frameIndexForProgress(progress, LONG_REST_FRAME_COUNT);
+            PixelPosition position = canvas.getCellPosition(row, col);
+            return Resolution{PieceState::LongRest, frame, position};
+        }
     }
 
     PixelPosition position = canvas.getCellPosition(row, col);

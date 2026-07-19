@@ -11,7 +11,15 @@ TEST_CASE("Testing pieceStateToString") {
         CHECK(pieceStateToString(PieceState::Jump) == "jump");
     }
 
+    SUBCASE("Moving maps to move") {
+        CHECK(pieceStateToString(PieceState::Moving) == "move");
+    }
+
     SUBCASE("Captured maps to captured") {
         CHECK(pieceStateToString(PieceState::Captured) == "captured");
+    }
+
+    SUBCASE("LongRest maps to long_rest") {
+        CHECK(pieceStateToString(PieceState::LongRest) == "long_rest");
     }
 }

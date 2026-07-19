@@ -15,7 +15,15 @@ rendering in `Renderer`/`BoardCanvas`; right-click-to-jump input in `GameLoop`; 
 fourth `PieceState::Jump` value with a real sprite-based jump animation (not just an
 overlay highlight), driven by the new `UI/AnimationFrame` collaborator; and the new
 `common/enums/PieceStateToString.h` free function that centralizes the
-`PieceState`-to-sprite-folder-name mapping (used by `SpriteManager`).
+`PieceState`-to-sprite-folder-name mapping (used by `SpriteManager`). Also updated to
+reflect a fifth `PieceState::LongRest` value: `AnimationFrame::resolve` now checks
+`GameView::getRests()` and returns a real `long_rest` sprite animation (5 frames,
+non-looping, same `frameIndexForProgress` helper as `Jump`) for any square with an
+active `Rest`, instead of that square just falling through to `Idle`. Deliberately
+**not** done as part of this: no `short_rest` sprite, and no new rest/cooldown after a
+`Jump` — `Jump` completion still doesn't start a `Rest` at all (see Real-time
+mechanics section), so `short_rest` remains unused; wiring that up would be a new
+gameplay mechanic, not just a rendering change, and was explicitly scoped out.
 
 ## What this project is
 
@@ -143,14 +151,16 @@ dispatch to the right rule → membership in `legalDestinations()`, returning a
 
 ## Real-time ("kung fu") mechanics
 
-`PieceState` (`common/enums/PieceState.h`) has 4 values: `Idle, Moving, Captured,
-Jump`. This still does **not** fully match the on-disk sprite state folders
-(`idle/move/jump/short_rest/long_rest` — see UI section: `Moving`/`Captured` map to
-`"moving"`/`"captured"`, not `"move"`/anything-captured-shaped; only `Jump`'s mapping
-to `"jump"` is correct), and no production code calls `Piece::setState` at all —
-`Piece.state` itself is still never mutated. The `Jump` sprite state *is* now driven
-in the live render loop, but — same as `Motion` before it — via `UI/AnimationFrame`
-reading `GameView`'s `JumpView` directly, not via `Piece.state`.
+`PieceState` (`common/enums/PieceState.h`) has 5 values: `Idle, Moving, Captured,
+Jump, LongRest`. This still does **not** fully match the on-disk sprite state folders
+(`idle/move/jump/short_rest/long_rest` — see UI section: `Captured` maps to
+`"captured"`, which has **no on-disk folder at all** — deliberately unimplemented,
+see Gaps; `Idle`/`Moving`/`Jump`/`LongRest` all map correctly to
+`"idle"`/`"move"`/`"jump"`/`"long_rest"`), and no production code calls
+`Piece::setState` at all — `Piece.state` itself is still never mutated. The
+`Jump`/`LongRest` sprite states *are* now driven in the live render loop, but — same
+as `Motion` before them — via `UI/AnimationFrame` reading `GameView`'s
+`JumpView`/`RestView`s directly, not via `Piece.state`.
 
 `RealTimeArbiter` (`logic/Controller/RealTimeArbiter`) is a scheduler with a manually
 advanced logical clock (`long long currentTime`, moved forward only by explicit
@@ -410,9 +420,18 @@ Two on-disk data formats exist but are **not read by any current C++ code**:
   private non-looping `frameIndexForProgress(progress, frameCount)` helper — hardcoded
   `frameCount = 5` to match the on-disk sprite count, since no JSON parsing exists yet
   to read it from `config.json`, same MVP simplification as the rest of the codebase —
-  and `canvas.getCellPosition(row, col)`), or neither (→ `PieceState::Idle`, frame `1`,
-  `canvas.getCellPosition(row, col)`). This is what makes the jumping-piece sprite
-  animation possible; `BoardCanvas` still owns the actual pixel arithmetic
+  and `canvas.getCellPosition(row, col)`), or the position of any `RestView` in
+  `gameView.getRests()` (→ `PieceState::LongRest`, a frame computed the same way from
+  `rest.getProgress(currentTime)` via the same `frameIndexForProgress` helper —
+  `LONG_REST_FRAME_COUNT = 5`, matching the on-disk `long_rest` sprite count — and
+  `canvas.getCellPosition(row, col)`), or neither of the above (→ `PieceState::Idle`,
+  frame `1`, `canvas.getCellPosition(row, col)`). The rest check is a linear scan over
+  `gameView.getRests()` per square (fine at board scale) and is checked *after*
+  Motion/Jump and *before* the final `Idle` fallback — a resting piece is never also
+  an active Motion/Jump target, since `Rest` only starts once `settleCompletedMotions`
+  has already deactivated the motion for that piece. This is what makes the
+  jumping-piece and resting-piece sprite animations possible; `BoardCanvas` still owns
+  the actual pixel arithmetic
   (`AnimationFrame` only decides *which* `BoardCanvas` method's result to use), and
   `SpriteManager` still owns turning `(PieceView, PieceState, frame)` into an `Img`.
 - `Renderer::render(const GameView&)` — `canvas.beginFrame()`, then: iterates all
@@ -450,14 +469,17 @@ The logic layer is now wired into the graphical executable:
 needed to play a game with a live board, mouse input, and real-time piece movement.
 
 What's still missing/rough:
-- **Sprite-level animation exists only for `Jump`** — `AnimationFrame` swaps to the
-  real `PieceState::Jump` sprite frames (5 frames, non-looping) while a jump is
-  active. `Motion` (traveling pieces) and the `Rest` cooldowns still render via
-  `PieceState::Idle` frame `1` plus `BoardCanvas` overlay primitives (interpolated
-  position, colored outlines, a progress bar) rather than their own sprite states —
-  `SpriteManager`'s `pieceStateToString` mapping for `Moving`/`Captured` is still out
-  of sync with the on-disk folder names (see gaps list), so a `Moving`-state sprite
-  request would still fail to load if one were ever made.
+- **Sprite-level animation exists for `Jump` and the post-move `Rest`, not yet for
+  `Captured`** — `AnimationFrame` swaps to the real `PieceState::Jump`/`LongRest`
+  sprite frames (5 frames each, non-looping) while a jump/rest is active. `Motion`
+  (traveling pieces) still renders via `PieceState::Moving` sprite frames plus
+  `BoardCanvas::getInterpolatedPosition` for the actual pixel movement; the rest
+  cooldown additionally keeps its `BoardCanvas` progress-bar overlay *alongside* the
+  new `LongRest` sprite (deliberate — the sprite holds on its last frame for the
+  whole rest per `long_rest/config.json`'s `is_loop: false`, so the bar is still the
+  only thing conveying *how much longer*). `Captured` has no on-disk sprite folder at
+  all and is not rendered by `AnimationFrame` — see gaps list; adding it would require
+  new art assets, not just code.
 - No visual feedback for game-over — the loop just stops; nothing is drawn to signal
   who won or that the window is about to close.
 - The text-only REPL (`CommandProcessor` / `src/tests/main.cpp`) still exists
@@ -481,12 +503,14 @@ for now that it's relied on by `Controller::getBoardView()`.
    `UI/GameLoop` now provide a live, playable loop (see "Current state of integration").
 2. ~~`BoardView(const Board&)` produces a wrongly-ordered/sparse vector~~ — fixed: it
    now builds a dense, row-major vector consistent with `getPiece(row, col)`'s indexing.
-3. `PieceState` enum (4 values: `Idle, Moving, Captured, Jump`) still doesn't cover the
-   on-disk cooldown states `short_rest`/`long_rest` that the real-time mechanic needs
-   for visual feedback, and `pieceStateToString` (`common/enums/PieceStateToString.h`,
-   used by `SpriteManager`) still doesn't match on-disk folder names for `Moving`
-   (`"moving"` vs. on-disk `"move"`). Only `Idle`/`Jump` are correct as of the jump
-   animation work.
+3. `PieceState` enum (5 values: `Idle, Moving, Captured, Jump, LongRest`) still
+   doesn't cover the on-disk `short_rest` cooldown state (only the post-*move* rest
+   is wired up as `LongRest`; nothing currently starts a `Rest` after a `Jump`, see
+   gap #5's note and the Real-time mechanics section, so `short_rest` stays unused).
+   `Captured` also has no backing on-disk sprite folder at all — `pieceStateToString`
+   maps it to `"captured"` regardless, but no code path ever requests it, so this is
+   latent rather than an active bug. `Idle`/`Moving`/`Jump`/`LongRest` all map to
+   correct, existing on-disk folder names.
 4. `Piece::setState` is never called outside tests — no production code marks a piece
    as `Moving`/`Captured`.
 5. `RealTimeArbiter` supports only one in-flight motion/jump globally, not per-piece —
@@ -521,7 +545,7 @@ for now that it's relied on by `Controller::getBoardView()`.
 | Change the initial/starting board setup | `src/logic/IO/GameFactory.cpp` (`createClassicBoard`) |
 | Change the live loop, mouse handling, or when the game stops | `src/UI/GameLoop.cpp` |
 | Change the per-frame data the UI renders from | `src/logic/Controller/Controller.cpp` (`getGameView`), `src/common/DTO/GameView.h`/`MotionView.h`/`JumpView.h`/`RestView.h` |
-| Change the traveling-piece animation, jumping-piece animation, selection/jump highlights, or rest-progress bar | `src/UI/AnimationFrame.cpp` (which state/frame/position a square renders), `src/UI/Renderer.cpp` (draw order for the overlays), `src/UI/BoardCanvas.cpp` (pixel math, colors/thicknesses) |
-| Fix/extend sprite rendering | `src/common/enums/PieceStateToString.h` (state-name mismatch for `Moving`/`Captured`), `src/UI/SpriteManager.cpp` (path/cache-key building), `src/UI/AnimationFrame.cpp` (which state/frame a piece requests) |
+| Change the traveling-piece animation, jumping-piece animation, resting-piece animation, selection/jump highlights, or rest-progress bar | `src/UI/AnimationFrame.cpp` (which state/frame/position a square renders), `src/UI/Renderer.cpp` (draw order for the overlays), `src/UI/BoardCanvas.cpp` (pixel math, colors/thicknesses) |
+| Fix/extend sprite rendering | `src/common/enums/PieceStateToString.h` (`Captured` has no backing on-disk folder), `src/UI/SpriteManager.cpp` (path/cache-key building), `src/UI/AnimationFrame.cpp` (which state/frame a piece requests) |
 | Change how pixel clicks map to board cells | `src/logic/Controller/BoardMapper.cpp`, fed via `Controller::handlePixelClick`/`handlePixelJump` |
 | Add/adjust tests | `src/tests/logic_tests/<matching-folder>/`, `src/tests/common_tests/` |

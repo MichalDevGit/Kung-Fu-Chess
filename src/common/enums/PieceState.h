@@ -6,7 +6,8 @@ enum class PieceState
     Idle,
     Moving,
     Captured,
-    Jump
+    Jump,
+    LongRest
 };
 
 #endif

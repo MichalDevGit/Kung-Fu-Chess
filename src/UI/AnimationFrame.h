@@ -9,6 +9,8 @@ private:
     const BoardCanvas& canvas;
 
     static constexpr int JUMP_FRAME_COUNT = 5;
+    static constexpr int MOVE_FRAME_COUNT = 5;
+    static constexpr int LONG_REST_FRAME_COUNT = 5;
 
     static int frameIndexForProgress(double progress, int frameCount);
 
