@@ -33,6 +33,13 @@ MoveValidation GameEngine::requestMove(
 
     const Piece* piece = getBoard().getPiece(from);
 
+    if (arbiter.isPieceResting(piece->getId()))
+    {
+        return MoveValidation(
+            false,
+            MoveValidationReason::PieceResting);
+    }
+
     int pathLength =
         calculatePathLength(*piece, from, to);
 
@@ -77,7 +84,14 @@ MoveValidation GameEngine::requestJump(
             false,
             MoveValidationReason::MoveAlreadyInProgress);
     }
-    
+
+    if (arbiter.isPieceResting(piece->getId()))
+    {
+        return MoveValidation(
+            false,
+            MoveValidationReason::PieceResting);
+    }
+
     arbiter.startJump(position, MILLIS_PER_SQUARE);
     
     return MoveValidation(
@@ -167,6 +181,8 @@ void GameEngine::advanceTime(long long milliseconds)
     settleCompletedMotions();
 
     settleCompletedJumps();
+
+    settleCompletedRests();
 }
 
 bool GameEngine::hasPieceAt(const Position& position) const
@@ -230,15 +246,30 @@ void GameEngine::settleCompletedMotions()
     {
         return;
     }
-    
+
     if (!arbiter.shouldFinishCurrentMotion())
     {
         return;
     }
-    
-    executeMove(arbiter.getCurrentMotion());
-    
+
+    const Motion motion = arbiter.getCurrentMotion();
+
+    const Piece* moverBefore = getBoard().getPiece(motion.getFrom());
+    int moverId = (moverBefore != nullptr) ? moverBefore->getId() : -1;
+
+    executeMove(motion);
+
     arbiter.finishMotion();
+
+    if (moverId != -1)
+    {
+        const Piece* moverAfter = getBoard().getPieceById(moverId);
+
+        if (moverAfter != nullptr && moverAfter->getPosition() == motion.getTo())
+        {
+            arbiter.startRest(moverId, REST_DURATION_MILLIS);
+        }
+    }
 }
 
 void GameEngine::settleCompletedJumps()
@@ -256,6 +287,11 @@ void GameEngine::settleCompletedJumps()
     arbiter.finishJump();
 }
 
+void GameEngine::settleCompletedRests()
+{
+    arbiter.purgeExpiredRests();
+}
+
 const GameState& GameEngine::getGameState() const
 {
     return gameState;
@@ -263,6 +299,31 @@ const GameState& GameEngine::getGameState() const
 
 bool GameEngine::hasActiveMotion() const{
     return arbiter.hasActiveMotion();
+}
+
+bool GameEngine::hasActiveJump() const
+{
+    return arbiter.hasActiveJump();
+}
+
+const Motion& GameEngine::getCurrentMotion() const
+{
+    return arbiter.getCurrentMotion();
+}
+
+const Jump& GameEngine::getCurrentJump() const
+{
+    return arbiter.getCurrentJump();
+}
+
+bool GameEngine::isPieceResting(int pieceId) const
+{
+    return arbiter.isPieceResting(pieceId);
+}
+
+std::vector<Rest> GameEngine::getActiveRests() const
+{
+    return arbiter.getActiveRests();
 }
 
 long long GameEngine::getCurrentTime() const{

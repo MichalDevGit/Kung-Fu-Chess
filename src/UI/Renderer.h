@@ -1,7 +1,7 @@
 #pragma once
 #include "BoardCanvas.h"
 #include "SpriteManager.h"
-#include "../common/DTO/BoardView.h"
+#include "../common/DTO/GameView.h"
 
 class Renderer {
 private:
@@ -10,6 +10,6 @@ private:
 
 public:
     Renderer(BoardCanvas& canvas, SpriteManager& spriteManager);
-    void render(const BoardView& snapshot);
+    void render(const GameView& gameView);
     void renderGameOver();
 };

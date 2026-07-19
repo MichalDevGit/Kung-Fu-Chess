@@ -40,14 +40,18 @@ std::string SpriteManager::getPath(PieceType type, PieceColor color, PieceState 
 }
 
 Img SpriteManager::getPieceSprite(const PieceView& piece, PieceState state, int frame) {
-    std::string key = typeToString(piece.getType()) + colorToString(piece.getColor()) + 
+    std::string key = typeToString(piece.getType()) + colorToString(piece.getColor()) +
                       stateToString(state) + std::to_string(frame);
-    // בדיקה אם הספרייט כבר קיים במפה כדי לחסוך טעינה מהדיסק
-    if (spritePaths.find(key) == spritePaths.end()) {
-        spritePaths[key] = getPath(piece.getType(), piece.getColor(), state, frame);
+
+    // כל ספרייט נטען ומפוענח מהדיסק פעם אחת בלבד; קריאות חוזרות (למשל כל
+    // פריים בלולאת הרינדור) מקבלות עותק זול מהזיכרון (clone) במקום קריאת דיסק.
+    auto cached = spriteCache.find(key);
+    if (cached != spriteCache.end()) {
+        return cached->second;
     }
+
     Img img;
-    // ניסיון קריאה מהנתיב שנבנה, עם שינוי גודל לגודל תא הלוח
-    img.read(spritePaths[key], {spriteSize, spriteSize}, true);
+    img.read(getPath(piece.getType(), piece.getColor(), state, frame), {spriteSize, spriteSize}, true);
+    spriteCache[key] = img;
     return img;
 }

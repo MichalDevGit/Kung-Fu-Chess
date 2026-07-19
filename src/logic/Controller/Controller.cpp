@@ -2,6 +2,12 @@
 
 #include <ostream>
 
+#include "../../common/DTO/BoardView.h"
+#include "../../common/DTO/MotionView.h"
+#include "../../common/DTO/JumpView.h"
+#include "../../common/DTO/RestView.h"
+#include "../model/Rest.h"
+
 Controller::Controller(GameEngine& gameEngine)
     : gameEngine(gameEngine),
       hasSelection(false),
@@ -57,6 +63,11 @@ void Controller::handlePixelClick(const PixelPosition& pixelPosition)
     click(boardMapper.pixelToCell(pixelPosition));
 }
 
+void Controller::handlePixelJump(const PixelPosition& pixelPosition)
+{
+    jump(boardMapper.pixelToCell(pixelPosition));
+}
+
 void Controller::wait(long long milliseconds){
     gameEngine.advanceTime(milliseconds);
 }
@@ -81,9 +92,47 @@ Position Controller::getSelectedPosition() const
     return selectedPosition;
 }
 
-BoardView Controller::getBoardView() const
+GameView Controller::getGameView() const
 {
-    return BoardView(gameEngine.getGameState().getBoard());
+    BoardView boardView(gameEngine.getGameState().getBoard());
+
+    MotionView motionView = gameEngine.hasActiveMotion()
+        ? MotionView(gameEngine.getCurrentMotion())
+        : MotionView();
+
+    JumpView jumpView = gameEngine.hasActiveJump()
+        ? JumpView(gameEngine.getCurrentJump())
+        : JumpView();
+
+    std::vector<RestView> rests;
+
+    for (const Rest& rest : gameEngine.getActiveRests())
+    {
+        const Piece* piece =
+            gameEngine.getGameState().getBoard().getPieceById(rest.getPieceId());
+
+        if (piece != nullptr)
+        {
+            rests.emplace_back(
+                rest.getPieceId(),
+                PositionView(piece->getPosition()),
+                rest.getStartTime(),
+                rest.getEndTime());
+        }
+    }
+
+    PositionView selectedPositionView = hasSelection
+        ? PositionView(selectedPosition)
+        : PositionView();
+
+    return GameView(
+        boardView,
+        motionView,
+        jumpView,
+        rests,
+        hasSelection,
+        selectedPositionView,
+        gameEngine.getCurrentTime());
 }
 
 bool Controller::isGameOver() const

@@ -83,3 +83,46 @@ bool RealTimeArbiter::shouldFinishCurrentJump() const
     return currentJump.isActive() &&
            currentJump.isFinished(currentTime);
 }
+
+void RealTimeArbiter::startRest(int pieceId, long long duration)
+{
+    restsByPieceId[pieceId] = Rest(pieceId, currentTime, currentTime + duration);
+}
+
+bool RealTimeArbiter::isPieceResting(int pieceId) const
+{
+    auto it = restsByPieceId.find(pieceId);
+
+    return it != restsByPieceId.end() &&
+           !it->second.isFinished(currentTime);
+}
+
+std::vector<Rest> RealTimeArbiter::getActiveRests() const
+{
+    std::vector<Rest> result;
+
+    for (const auto& entry : restsByPieceId)
+    {
+        if (!entry.second.isFinished(currentTime))
+        {
+            result.push_back(entry.second);
+        }
+    }
+
+    return result;
+}
+
+void RealTimeArbiter::purgeExpiredRests()
+{
+    for (auto it = restsByPieceId.begin(); it != restsByPieceId.end(); )
+    {
+        if (it->second.isFinished(currentTime))
+        {
+            it = restsByPieceId.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}

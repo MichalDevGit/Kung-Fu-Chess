@@ -19,6 +19,7 @@ private:
 
     static void mouseCallback(int event, int x, int y, int flags, void* userdata);
     void onMouseDown(int x, int y);
+    void onMouseRightDown(int x, int y);
 };
 
 #endif

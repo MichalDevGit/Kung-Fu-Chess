@@ -14,7 +14,7 @@ private:
     std::string assetsPath;
     std::string piecesFolder;
     int spriteSize;
-    std::map<std::string, std::string> spritePaths;
+    std::map<std::string, Img> spriteCache;
 
     // פונקציה עזר פנימית לבניית נתיב
     std::string getPath(PieceType type, PieceColor color, PieceState state, int frame) const;

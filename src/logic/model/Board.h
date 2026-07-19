@@ -25,6 +25,9 @@ public:
     Piece* getPiece(const Position& position);
     const Piece* getPiece(const Position& position) const;
 
+    Piece* getPieceById(int id);
+    const Piece* getPieceById(int id) const;
+
     void addPiece(const Piece& piece);
 
     void removePiece(const Position& position);

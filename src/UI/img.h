@@ -84,6 +84,25 @@ public:
 
 
     /**
+     * Draw a rectangle directly onto the image.
+     *
+     * Unlike draw_on(), this is a direct, opaque write (same category as
+     * put_text()) - no alpha compositing. Pass thickness = cv::FILLED for a
+     * filled rectangle.
+     *
+     * @param x X coordinate of the rectangle's top-left corner
+     * @param y Y coordinate of the rectangle's top-left corner
+     * @param w Rectangle width
+     * @param h Rectangle height
+     * @param color Rectangle color (BGR or BGRA)
+     * @param thickness Border thickness, or cv::FILLED for a filled rectangle
+     */
+    void draw_rectangle(int x, int y, int w, int h,
+                         const cv::Scalar& color = cv::Scalar(255, 255, 255, 255),
+                         int thickness = 1);
+
+
+    /**
      * The window name shared by every Img so callers (e.g. a live game loop
      * registering a mouse callback) can address the same OpenCV window that
      * show() displays to.

@@ -10,7 +10,8 @@ enum class MoveValidationReason
     IllegalMovement,
     PathBlocked,
     GameOver,
-    MoveAlreadyInProgress
+    MoveAlreadyInProgress,
+    PieceResting
 };
 
 #endif

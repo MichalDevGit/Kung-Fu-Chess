@@ -219,6 +219,18 @@ void Img::draw_on(Img& other_img, int x, int y) {
     }
 }
 
+void Img::draw_rectangle(int x, int y, int w, int h,
+                         const cv::Scalar& color,
+                         int thickness)
+{
+    if (img.empty())
+    {
+        throw std::runtime_error("Image not loaded.");
+    }
+
+    cv::rectangle(img, cv::Rect(x, y, w, h), color, thickness, cv::LINE_AA);
+}
+
 void Img::put_text(const std::string& txt,
                    int x,
                    int y,

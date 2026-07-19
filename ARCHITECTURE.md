@@ -6,11 +6,12 @@ eventually look. Read this before exploring the source tree — it should make a
 re-read of `src/` unnecessary for most tasks. If you change the architecture in a way
 that makes a section below wrong, update that section in the same change.
 
-Last reviewed: 2026-07-16, against the source tree as of commit `9b1b490`, updated
-same-day to reflect the new `Controller::handlePixelClick`/`getBoardView`/`isGameOver`
-UI-mediation API, the `PixelPosition` move to `common/`, the `BoardView(const Board&)`
-fix, and — the big one — the new `GameFactory` + `UI/GameLoop` that finally wire the
-logic layer into a live, playable graphical executable.
+Last reviewed: 2026-07-19, against the source tree as of commit `02cd0a6`, updated to
+reflect: per-piece post-move `Rest` in `RealTimeArbiter`/`GameEngine`; the new
+`GameView` aggregate DTO (which **replaces** `Controller::getBoardView()`) carrying
+`MotionView`/`JumpView`/`RestView`/selection/current-time snapshots to the UI; the
+traveling-piece animation, selection highlight, jump highlight and rest-countdown
+rendering in `Renderer`/`BoardCanvas`; and right-click-to-jump input in `GameLoop`.
 
 ## What this project is
 
@@ -93,6 +94,13 @@ independent of rendering) does hold in that direction.
 - **`Jump`** — same shape as `Motion` but for a stationary "jump" ability: `{bool
   active; Position position; long long startTime, endTime;}`. Represents a temporary
   ambush/counter window at a single square, not a move.
+- **`Rest`** — `{int pieceId; long long startTime, endTime;}`. Represents a
+  per-piece "just moved, can't move/jump again yet" cooldown. Unlike `Motion`/
+  `Jump`, it's keyed by **piece id**, not `Position` (a piece stays put while
+  resting, so identity — not square — is what a `requestMove`/`requestJump` guard
+  needs to check), and it has no `active` flag: it lives in `RealTimeArbiter`'s
+  `std::map<int, Rest>`, where map presence is itself the "active" signal. Lives in
+  `RealTimeArbiter`, not `Board` — same ownership split as `Motion`/`Jump`.
 - **`Piece`** — `{int id; PieceType type; PieceColor color; PieceState state;
   Position position;}`. `operator==`/`!=` compare **only by id**. `state` exists and
   is settable (`setState`), but no production code ever calls `setState` — see Gaps.
@@ -150,13 +158,26 @@ independent cooldown.
 - `MILLIS_PER_SQUARE = 1000` — a move's duration is `pathLength * 1000ms`, where
   `pathLength` depends on piece type (King/Knight = 1; Pawn/Bishop = row distance;
   Rook = Manhattan distance; Queen = Manhattan if straight else row distance).
-- `requestMove(from, to)` — rejects if game over or a motion is already in progress;
+- `REST_DURATION_MILLIS = 2000` — after a piece finishes a move (see
+  `settleCompletedMotions` below), that specific piece is put into a `Rest` for this
+  long, during which `requestMove`/`requestJump` reject it specifically with
+  `MoveValidationReason::PieceResting` (checked *after* the existing global
+  `MoveAlreadyInProgress`/rule-validation/existence gates, right before the
+  state-mutating call — same "global gates first, piece-specific gates last"
+  ordering in both methods). This is a **per-piece** lock layered on top of the
+  still-unchanged single-global-`Motion`/`Jump` exclusivity below — it closes part
+  of gap #5 (per-piece rest specifically), not gap #5 as a whole; only one piece can
+  still be *traveling* at a time board-wide.
+- `requestMove(from, to)` — rejects if game over, a motion is already in progress, or
+  (once validation and the piece lookup both succeed) the piece is resting;
   otherwise validates via `RuleEngine` and starts a `Motion` in the arbiter. **No
   board mutation happens at request time.**
-- `requestJump(position)` — same guards, starts a `Jump` of duration
-  `MILLIS_PER_SQUARE` at the piece's own square. Doesn't move the piece; models a
-  temporary ambush/counter window.
-- `executeMove(motion)` — runs when a motion *completes* (not when requested):
+- `requestJump(position)` — same guards (plus the same resting check, ordered after
+  `hasActiveJump()`), starts a `Jump` of duration `MILLIS_PER_SQUARE` at the piece's
+  own square. Doesn't move the piece; models a temporary ambush/counter window.
+- `executeMove(motion)` — runs when a motion *completes* (not when requested), and is
+  **not** aware of `Rest` at all (rest scheduling is a settlement-timing concern that
+  belongs in `settleCompletedMotions`, not in the pure board-mutation function):
   - Special case: if a `Jump` is active at the motion's destination and the mover is
     the opposite color of the jumping piece, the **mover gets captured** (removed) and
     the jump is consumed — the move itself doesn't happen. This is how "jump" acts as
@@ -167,7 +188,16 @@ independent cooldown.
 - `advanceTime(ms)` — advances the arbiter's clock, then settles any motion/jump whose
   `endTime` has passed (`settleCompletedMotions` calls `executeMove` +
   `finishMotion`; `settleCompletedJumps` just deactivates — the jump's actual capture
-  effect is checked eagerly inside a *different* motion's `executeMove`, not here).
+  effect is checked eagerly inside a *different* motion's `executeMove`, not here),
+  then `settleCompletedRests()` (purges any `Rest` whose `endTime` has passed).
+  `settleCompletedMotions` captures the mover's id from `motion.getFrom()` **before**
+  calling `executeMove`, then re-looks it up by id (`Board::getPieceById`)
+  *afterward* and only starts a `Rest` for it if it's still alive **and** now sitting
+  at `motion.getTo()`. This matters: in the ambush-capture special case above, the
+  *mover* is removed but the *defending* piece is left standing at that square —
+  naively checking "is there a piece at `motion.getTo()`?" after `executeMove` would
+  find the defender and incorrectly put *it* to rest for successfully defending.
+  Keying the lookup by the mover's id specifically avoids that.
 
 There is currently no code path that calls `advanceTime` on a real clock/timer — time
 only moves forward when a caller (the REPL's `wait <ms>` command, or a test) asks it
@@ -185,16 +215,31 @@ directly. It holds `GameEngine&`, a `BoardMapper` (by value), `hasSelection`,
   `requestMove` and clears selection regardless of validation outcome. Still public
   and used directly by the REPL (`CommandProcessor`) and unit tests, which already
   work in logical-position space.
-- `handlePixelClick(const PixelPosition&)` — the UI-facing entry point. Translates via
-  `boardMapper.pixelToCell(...)` into a `Position`, then delegates to `click(Position)`.
-  This is the only method the UI needs to call to feed in raw mouse input.
+- `handlePixelClick(const PixelPosition&)` — the UI-facing entry point for
+  selecting/moving. Translates via `boardMapper.pixelToCell(...)` into a `Position`,
+  then delegates to `click(Position)`.
+- `handlePixelJump(const PixelPosition&)` — the UI-facing entry point for jumping,
+  mirroring `handlePixelClick`: translates the pixel via the same `boardMapper`,
+  then delegates to `jump(Position)`. Wired to right-click in `UI/GameLoop` (see
+  below) — before this existed, nothing in the graphical game could ever trigger a
+  jump at all.
 - `jump(Position)` → `requestJump`. `wait(ms)` → `advanceTime`. `printBoard(ostream&)`
   → `BoardPrinter::print`.
-- `getBoardView() const` → builds and returns `BoardView(gameEngine.getGameState().getBoard())` —
-  a read-only snapshot for the UI to render. The UI is expected to poll this every
-  frame rather than caching engine state itself; when animations are added, this same
-  method is where in-motion positions would be exposed, with no change needed to the
-  UI's call site.
+- `getGameView() const` → builds and returns a `GameView`, the single per-frame
+  snapshot the UI polls (**replaces** the old `getBoardView()`/`BoardView`-only
+  method). Assembles: `BoardView(gameEngine.getGameState().getBoard())`; a
+  `MotionView`/`JumpView` (default-constructed/inactive if `GameEngine` reports no
+  active motion/jump); a `std::vector<RestView>` built by mapping
+  `gameEngine.getActiveRests()` through `Board::getPieceById` to resolve each
+  resting piece's current position (skipping any whose piece id no longer exists —
+  e.g. captured mid-rest); and the controller's own `hasSelection`/
+  `selectedPosition`. `GameView` is a new sibling DTO alongside `BoardView`, not an
+  extension of it — `Motion`/`Jump`/`Rest` live in `RealTimeArbiter`, not `Board`,
+  and selection is Controller-owned UI state with no `Board`/`GameState`
+  representation at all, so neither can be folded into `BoardView(const Board&)`'s
+  single-source conversion. (This supersedes an earlier note in this file that
+  anticipated `getBoardView()` itself absorbing in-motion data — the real shape
+  needed more than `Board` alone could express.)
 - `isGameOver() const` → forwards to `gameEngine.getGameState().isGameOver()`. Lets
   `UI/GameLoop` decide when to stop the render loop without reaching past `Controller`
   into `GameEngine` directly.
@@ -225,13 +270,30 @@ Full intended flow:
 rendering, each with a converting constructor from the logic-layer type.
 `MoveValidation` (header-only) is `{bool isValid; MoveValidationReason reason;}`.
 
+`MotionView`/`JumpView` mirror `Motion`/`Jump` the same way (converting constructor,
+default constructor for the "inactive" case). `RestView` is the exception — since
+`Rest` only carries a piece id (no `Position`), `RestView` has **no** converting
+constructor from `Rest` alone; it's built manually by `Controller::getGameView()`
+after resolving the resting piece's current position via `Board::getPieceById`.
+All three add `getProgress(long long currentTime) const`, an elapsed-fraction
+`[0.0, 1.0]` computed via the shared free function `computeProgress` in
+`common/TimeProgress.h` (one clamp/divide implementation, reused three times,
+instead of copy-pasting it into each DTO).
+
+`GameView` is a new aggregate "one render frame's worth of data" DTO: `{BoardView
+board; MotionView motion; JumpView jump; std::vector<RestView> rests; bool
+hasSelection; PositionView selectedPosition; long long currentTime;}`, built
+entirely by `Controller::getGameView()` (see Controller section above for why this
+is a sibling of `BoardView` rather than an extension of it).
+
 `BoardView(const Board&)` now loops `row`/`col` and calls `board.getPiece(Position(row,
 col))` for each cell, producing a dense, row-major 64-slot vector — empty squares get a
 default `PieceView(PieceType::Empty, PieceColor::None, ...)` at that position — so it's
 consistent with `BoardView::getPiece(row, col)`'s `pieces[row*cols+col]` indexing.
 (Previously this constructor iterated `Board::getPieces()`, a sparse, insertion-ordered
 vector of only occupied squares, which produced wrong results when combined with
-`getPiece(row,col)` — fixed as part of wiring up `Controller::getBoardView()`.)
+`getPiece(row,col)` — fixed as part of wiring up what was then `Controller::getBoardView()`
+and is now folded into `Controller::getGameView()`'s `BoardView` field.)
 
 ## IO layer (`src/logic/IO/`)
 
@@ -272,9 +334,15 @@ Two on-disk data formats exist but are **not read by any current C++ code**:
 
 - `Img` — RAII `cv::Mat` wrapper. `read()` loads via `cv::imread(..., IMREAD_UNCHANGED)`
   (preserves alpha). `draw_on()` alpha-blends a 4-channel image onto another at (x,y).
-  `show()` is a pure drawing call — `cv::imshow(windowName(), img)` only, no
-  `cv::waitKey` and no return value. Pumping the window's event queue / reading a
-  keypress is deliberately **not** this class's job (see `GameLoop` below) —
+  `draw_rectangle(x, y, w, h, color, thickness)` wraps `cv::rectangle` — a **direct,
+  opaque** write (same category as `put_text`, unlike `draw_on`'s alpha-blend
+  compositing); pass `thickness = cv::FILLED` for a filled rectangle. Used by
+  `BoardCanvas` for selection/jump highlights (outlined) and the rest-countdown bar
+  (filled) — one primitive, three callers, all rendering as **solid colors**, not
+  translucent overlays (a `cv::rectangle` limitation, accepted as an MVP
+  simplification). `show()` is a pure drawing call — `cv::imshow(windowName(), img)`
+  only, no `cv::waitKey` and no return value. Pumping the window's event queue /
+  reading a keypress is deliberately **not** this class's job (see `GameLoop` below) —
   `Img`/`BoardCanvas`/`Renderer` only ever produce pixels, never interpret input.
   `windowName()` is a shared static constant (`"KungFuChess"`) so other code (namely
   `GameLoop`, for `cv::setMouseCallback`) can address the same window `show()` draws to.
@@ -284,36 +352,69 @@ Two on-disk data formats exist but are **not read by any current C++ code**:
   unused** — `Renderer`/`BoardCanvas` do their own inline pixel math instead.
 - `BoardCanvas` — holds a pristine `background` `Img` (loaded once from the board
   image) plus a `frame` `Img` (the actual draw buffer) and `cellSize`. `beginFrame()`
-  resets `frame = background` — this exists because `drawPiece` permanently blends
-  piece sprites into whatever image it's given; without resetting to a clean
-  background before each frame, pieces would leave visible trails as they move across
-  repeated `render()` calls in the live loop. `getCellPosition(row, col)` is yet
-  another independent cell→pixel calculation. `getWindowName()` forwards to
-  `Img::windowName()`.
+  resets `frame = background` — this exists because `drawPiece`/`drawPieceAtPixel`
+  permanently blend piece sprites into whatever image they're given; without
+  resetting to a clean background before each frame, pieces would leave visible
+  trails as they move across repeated `render()` calls in the live loop.
+  `drawPiece(Img&, row, col)` now just delegates to `drawPieceAtPixel(Img&, const
+  PixelPosition&)` (added so a moving piece can be drawn at an arbitrary
+  interpolated pixel, not just a cell). `getCellPosition(row, col)` is yet another
+  independent cell→pixel calculation. `getInterpolatedPosition(from, to, progress)`
+  linearly interpolates between two cells' pixel positions — this is what makes the
+  traveling-piece animation possible. `drawSelectionHighlight(row, col)` and
+  `drawJumpHighlight(row, col)` both go through a private `drawCellOutline(row, col,
+  color, thickness)` helper (different named `static const cv::Scalar`/`static
+  constexpr int` colors/thicknesses so the two are visually distinct).
+  `drawRestProgress(row, col, progress)` draws a filled bar along the cell's bottom
+  edge whose width **shrinks** as the rest counts down (`cellSize * (1 -
+  progress)`) — `getProgress()`'s elapsed-fraction convention is inverted to a
+  remaining-time convention here, in `BoardCanvas`, not baked into `RestView`, since
+  `MotionView`/`JumpView` need the elapsed-fraction semantics as-is for
+  interpolation. `getWindowName()` forwards to `Img::windowName()`.
 - `SpriteManager` — builds sprite file paths as
-  `{assets}/{piecesFolder}/{TYPE}{COLOR}/states/{state}/sprites/{frame}.png` and loads
-  them via `Img::read` on every call (its path-string cache does not cache decoded
-  images, so this doesn't save disk I/O). **`stateToString` is out of sync with the
+  `{assets}/{piecesFolder}/{TYPE}{COLOR}/states/{state}/sprites/{frame}.png`.
+  `getPieceSprite` caches **decoded** `Img`s in `spriteCache` (keyed by
+  type+color+state+frame), not just path strings — each unique sprite is read
+  and resized from disk exactly once; every later call (every piece, every
+  frame, in the live render loop) returns a cheap in-memory `Img` copy
+  (`cv::Mat::clone()`, no disk I/O/decode). This matters a lot once pieces
+  animate: the old path-only cache re-read+re-decoded every visible sprite from
+  disk on every single frame, which was the actual bottleneck behind visibly
+  stuttery motion (the render *loop* was already running every iteration — each
+  individual `render()` call was just slow). **`stateToString` is out of sync with the
   actual on-disk folder names**: it emits `"moving"`/`"captured"` but the folders are
   `idle/move/jump/short_rest/long_rest` — requesting a `Moving`-state sprite will fail
   to load. `typeToString`'s default case and `colorToString`'s fallback also produce
   wrong-but-plausible values for `Empty`/`None` inputs rather than erroring (latent,
-  since `Renderer` filters out `Empty` pieces before calling it).
-- `Renderer::render(const BoardView&)` — `canvas.beginFrame()`, then iterates all
-  cells, skips `Empty`, always requests **`PieceState::Idle`, frame `1`** regardless of
-  the piece's actual state — no animation, no cooldown visuals yet — then
-  `canvas.show()`. Purely a drawing operation: `void`, no return value, no awareness
-  that a "frame" is part of a loop or that input exists.
-- `GameLoop` (new) — the live game loop and the **only** place in `UI/` that touches
+  since `Renderer` filters out `Empty` pieces before calling it). **Untouched by the
+  motion/rest/jump-visualization work** — all of that is done via `BoardCanvas`
+  overlay primitives, not sprite-state swapping, so this gap is still live.
+- `Renderer::render(const GameView&)` — `canvas.beginFrame()`, then: iterates all
+  cells and draws each non-`Empty` piece at rest position **except** the cell
+  matching `motion.getFrom()` when a motion is active (that piece is drawn
+  separately, below, at its interpolated position instead — otherwise it would
+  render twice); if a motion is active, computes `motion.getProgress(currentTime)`
+  and draws that piece at `canvas.getInterpolatedPosition(from, to, progress)`; if a
+  jump is active, draws a jump highlight at its position; draws a rest-progress bar
+  for every `RestView` in the snapshot; if there's a selection, draws a selection
+  highlight; finally `canvas.show()`. Still always requests **`PieceState::Idle`,
+  frame `1`** from `SpriteManager` regardless of the piece's actual state — no
+  sprite-level animation/cooldown visuals, only the `BoardCanvas` overlay
+  primitives above. Purely a drawing operation: `void`, no return value, no
+  awareness that a "frame" is part of a loop or that input exists.
+- `GameLoop` — the live game loop and the **only** place in `UI/` that touches
   input or `logic/*`. Constructed with `Controller&`, `Renderer&`, `BoardCanvas&`.
   `run()`: registers `cv::setMouseCallback` on `canvas.getWindowName()` once (a static
-  trampoline casts `void* userdata` back to `GameLoop*` and calls
-  `controller.handlePixelClick(PixelPosition(x, y))` on `EVENT_LBUTTONDOWN`), then
-  loops: measure wall-clock delta via `std::chrono::steady_clock` → `controller.wait(deltaMs)`
-  (this is what finally drives `GameEngine::advanceTime` off a real clock, instead of
-  only a REPL/test calling it manually) → `renderer.render(controller.getBoardView())`
-  → `cv::waitKey(1)` (owned here, not in `Renderer`/`Img`, since interpreting a keypress
-  is an input decision) → stops the loop on ESC or `controller.isGameOver()`.
+  trampoline casts `void* userdata` back to `GameLoop*` and dispatches on the event
+  type: `EVENT_LBUTTONDOWN` → `onMouseDown` → `controller.handlePixelClick(PixelPosition(x,
+  y))`; `EVENT_RBUTTONDOWN` → `onMouseRightDown` → `controller.handlePixelJump(PixelPosition(x,
+  y))` — the only input path that can ever produce an active `Jump` in the live
+  game), then loops: measure wall-clock delta via `std::chrono::steady_clock` →
+  `controller.wait(deltaMs)` (this is what finally drives `GameEngine::advanceTime`
+  off a real clock, instead of only a REPL/test calling it manually) →
+  `renderer.render(controller.getGameView())` → `cv::waitKey(1)` (owned here, not in
+  `Renderer`/`Img`, since interpreting a keypress is an input decision) → stops the
+  loop on ESC or `controller.isGameOver()`.
 
 ## Current state of integration
 
@@ -324,10 +425,12 @@ The logic layer is now wired into the graphical executable:
 with a live board, mouse input, and real-time piece movement.
 
 What's still missing/rough:
-- No animation, no cooldown-state visuals — `Renderer` always draws `PieceState::Idle`
-  frame `1` (see gaps list). `SpriteManager::stateToString` also doesn't match the
-  on-disk folder names, so requesting a non-Idle sprite would fail if anything ever
-  asked for one.
+- No **sprite-level** animation/cooldown-state visuals — `Renderer` still always
+  requests `PieceState::Idle` frame `1` from `SpriteManager`, whose `stateToString`
+  remains out of sync with the on-disk folder names (see gaps list). Motion/rest/jump
+  now **do** have visuals, but via `BoardCanvas` overlay primitives (interpolated
+  position, colored outlines, a progress bar) layered on top of the always-Idle
+  sprite, not via swapping to a different sprite state.
 - No visual feedback for game-over — the loop just stops; nothing is drawn to signal
   who won or that the window is about to close.
 - The text-only REPL (`CommandProcessor` / `src/tests/main.cpp`) still exists
@@ -359,6 +462,11 @@ for now that it's relied on by `Controller::getBoardView()`.
    as `Moving`/`Captured`.
 5. `RealTimeArbiter` supports only one in-flight motion/jump globally, not per-piece —
    a deliberate MVP simplification worth knowing about before extending it.
+   **Partially addressed for post-move cooldowns**: `Rest` *is* per-piece (keyed by
+   piece id, independent per piece, doesn't block other pieces), so multiple pieces
+   can be resting simultaneously. The `Motion`/`Jump` themselves are still
+   single-global exactly as before — only one piece can be *traveling*/*jumping* at
+   a time board-wide; this gap is not fixed for those.
 6. Cell-pixel size (`100`) is hardcoded independently in three places
    (`BoardMapper`, `CoordinateConverter`, `BoardCanvas`'s constructor arg in
    `main.cpp`) with no shared constant.
@@ -377,11 +485,14 @@ for now that it's relied on by `Controller::getBoardView()`.
 |---|---|
 | Change/add a piece's movement rule | `src/logic/rules/<Piece>Rule.cpp`, registered in `RuleEngine`'s constructor |
 | Change move/jump timing (cooldowns, speed) | `src/logic/Engine/GameEngine.cpp` (`MILLIS_PER_SQUARE`, `calculatePathLength`), `src/logic/Controller/RealTimeArbiter.cpp` |
+| Change the post-move rest/cooldown duration or its guard | `src/logic/Engine/GameEngine.cpp` (`REST_DURATION_MILLIS`, `settleCompletedMotions`, the `isPieceResting` checks in `requestMove`/`requestJump`), `src/logic/Controller/RealTimeArbiter.cpp` (`startRest`/`isPieceResting`/`getActiveRests`/`purgeExpiredRests`) |
 | Change what happens when a move completes (capture, promotion, game-over) | `GameEngine::executeMove` |
 | Change click/selection UX | `src/logic/Controller/Controller.cpp` |
 | Parse/print board text (REPL only, not production setup) | `src/logic/IO/BoardParser.cpp` / `BoardPrinter.cpp` |
 | Change the initial/starting board setup | `src/logic/IO/GameFactory.cpp` (`createClassicBoard`) |
 | Change the live loop, mouse handling, or when the game stops | `src/UI/GameLoop.cpp` |
+| Change the per-frame data the UI renders from | `src/logic/Controller/Controller.cpp` (`getGameView`), `src/common/DTO/GameView.h`/`MotionView.h`/`JumpView.h`/`RestView.h` |
+| Change the traveling-piece animation, selection/jump highlights, or rest-progress bar | `src/UI/Renderer.cpp` (draw order/what triggers each), `src/UI/BoardCanvas.cpp` (pixel math, colors/thicknesses) |
 | Fix/extend sprite rendering | `src/UI/SpriteManager.cpp` (state-name mismatch), `src/UI/Renderer.cpp` (hardcoded Idle/frame 1) |
-| Change how pixel clicks map to board cells | `src/logic/Controller/BoardMapper.cpp`, fed via `Controller::handlePixelClick` |
-| Add/adjust tests | `src/tests/logic_tests/<matching-folder>/` |
+| Change how pixel clicks map to board cells | `src/logic/Controller/BoardMapper.cpp`, fed via `Controller::handlePixelClick`/`handlePixelJump` |
+| Add/adjust tests | `src/tests/logic_tests/<matching-folder>/`, `src/tests/common_tests/` |

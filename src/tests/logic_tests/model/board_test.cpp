@@ -43,12 +43,22 @@ TEST_CASE("Testing Board class functionality") {
         Position from(2, 2);
         Position to(3, 3);
         Piece p(3, PieceType::Knight, PieceColor::White, from);
-        
+
         board.addPiece(p);
         board.movePiece(from, to);
 
         CHECK(board.containsPiece(from) == false);
         CHECK(board.containsPiece(to) == true);
         CHECK(board.getPiece(to)->getId() == 3);
+    }
+
+    SUBCASE("Lookup by id") {
+        Position pos(4, 4);
+        Piece p(9, PieceType::Bishop, PieceColor::Black, pos);
+        board.addPiece(p);
+
+        CHECK(board.getPieceById(9) != nullptr);
+        CHECK(board.getPieceById(9)->getPosition() == pos);
+        CHECK(board.getPieceById(999) == nullptr);
     }
 }

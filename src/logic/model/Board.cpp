@@ -51,6 +51,32 @@ const Piece* Board::getPiece(const Position& position) const
     return nullptr;
 }
 
+Piece* Board::getPieceById(int id)
+{
+    for (Piece& piece : pieces)
+    {
+        if (piece.getId() == id)
+        {
+            return &piece;
+        }
+    }
+
+    return nullptr;
+}
+
+const Piece* Board::getPieceById(int id) const
+{
+    for (const Piece& piece : pieces)
+    {
+        if (piece.getId() == id)
+        {
+            return &piece;
+        }
+    }
+
+    return nullptr;
+}
+
 void Board::addPiece(const Piece& piece)
 {
     if (!isValidPosition(piece.getPosition()))

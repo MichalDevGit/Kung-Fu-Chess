@@ -1,8 +1,12 @@
 #ifndef REALTIMEARBITER_H
 #define REALTIMEARBITER_H
 
+#include <map>
+#include <vector>
+
 #include "../model/Motion.h"
 #include "../model/Jump.h"
+#include "../model/Rest.h"
 
 class RealTimeArbiter
 {
@@ -12,6 +16,8 @@ private:
     long long currentTime;
 
     Jump currentJump;
+
+    std::map<int, Rest> restsByPieceId;
 
 public:
     RealTimeArbiter();
@@ -45,6 +51,15 @@ public:
     const Jump& getCurrentJump() const;
     
     bool shouldFinishCurrentJump() const;
+
+
+    void startRest(int pieceId, long long duration);
+
+    bool isPieceResting(int pieceId) const;
+
+    std::vector<Rest> getActiveRests() const;
+
+    void purgeExpiredRests();
 };
 
 #endif

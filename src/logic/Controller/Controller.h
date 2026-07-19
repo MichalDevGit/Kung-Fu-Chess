@@ -8,7 +8,7 @@
 #include "../IO/BoardPrinter.h"
 #include "BoardMapper.h"
 #include "../../common/PixelPosition.h"
-#include "../../common/DTO/BoardView.h"
+#include "../../common/DTO/GameView.h"
 
 class Controller
 {
@@ -17,6 +17,7 @@ public:
 
     void click(const Position& position);
     void handlePixelClick(const PixelPosition& pixelPosition);
+    void handlePixelJump(const PixelPosition& pixelPosition);
     void wait(long long milliseconds);
     void printBoard(std::ostream& out) const;
     void jump(const Position& position);
@@ -24,7 +25,7 @@ public:
     bool hasSelectedPiece() const;
     Position getSelectedPosition() const;
 
-    BoardView getBoardView() const;
+    GameView getGameView() const;
     bool isGameOver() const;
 
 private:
