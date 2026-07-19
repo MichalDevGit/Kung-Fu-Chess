@@ -268,5 +268,12 @@ void Img::show()
         throw std::runtime_error("Image not loaded.");
     }
 
+    static bool windowCreated = false;
+    if (!windowCreated)
+    {
+        cv::namedWindow(windowName(), cv::WINDOW_NORMAL);
+        windowCreated = true;
+    }
+
     cv::imshow(windowName(), img);
 }

@@ -20,7 +20,6 @@ private:
     std::string getPath(PieceType type, PieceColor color, PieceState state, int frame) const;
     std::string typeToString(PieceType type) const;
     std::string colorToString(PieceColor color) const;
-    std::string stateToString(PieceState state) const;
 
 public:
     SpriteManager(const std::string& assetsPath, const std::string& piecesFolder = "pieces2", int spriteSize = 100);

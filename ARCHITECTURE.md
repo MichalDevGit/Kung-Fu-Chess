@@ -11,7 +11,11 @@ reflect: per-piece post-move `Rest` in `RealTimeArbiter`/`GameEngine`; the new
 `GameView` aggregate DTO (which **replaces** `Controller::getBoardView()`) carrying
 `MotionView`/`JumpView`/`RestView`/selection/current-time snapshots to the UI; the
 traveling-piece animation, selection highlight, jump highlight and rest-countdown
-rendering in `Renderer`/`BoardCanvas`; and right-click-to-jump input in `GameLoop`.
+rendering in `Renderer`/`BoardCanvas`; right-click-to-jump input in `GameLoop`; a
+fourth `PieceState::Jump` value with a real sprite-based jump animation (not just an
+overlay highlight), driven by the new `UI/AnimationFrame` collaborator; and the new
+`common/enums/PieceStateToString.h` free function that centralizes the
+`PieceState`-to-sprite-folder-name mapping (used by `SpriteManager`).
 
 ## What this project is
 
@@ -139,10 +143,14 @@ dispatch to the right rule → membership in `legalDestinations()`, returning a
 
 ## Real-time ("kung fu") mechanics
 
-`PieceState` (`common/enums/PieceState.h`) has exactly 3 values: `Idle, Moving,
-Captured`. This does **not** match the on-disk sprite state folders
-(`idle/move/jump/short_rest/long_rest` — see UI section), and no production code
-transitions a `Piece`'s state at all — state-based rendering has no producer yet.
+`PieceState` (`common/enums/PieceState.h`) has 4 values: `Idle, Moving, Captured,
+Jump`. This still does **not** fully match the on-disk sprite state folders
+(`idle/move/jump/short_rest/long_rest` — see UI section: `Moving`/`Captured` map to
+`"moving"`/`"captured"`, not `"move"`/anything-captured-shaped; only `Jump`'s mapping
+to `"jump"` is correct), and no production code calls `Piece::setState` at all —
+`Piece.state` itself is still never mutated. The `Jump` sprite state *is* now driven
+in the live render loop, but — same as `Motion` before it — via `UI/AnimationFrame`
+reading `GameView`'s `JumpView` directly, not via `Piece.state`.
 
 `RealTimeArbiter` (`logic/Controller/RealTimeArbiter`) is a scheduler with a manually
 advanced logical clock (`long long currentTime`, moved forward only by explicit
@@ -381,27 +389,44 @@ Two on-disk data formats exist but are **not read by any current C++ code**:
   animate: the old path-only cache re-read+re-decoded every visible sprite from
   disk on every single frame, which was the actual bottleneck behind visibly
   stuttery motion (the render *loop* was already running every iteration — each
-  individual `render()` call was just slow). **`stateToString` is out of sync with the
-  actual on-disk folder names**: it emits `"moving"`/`"captured"` but the folders are
-  `idle/move/jump/short_rest/long_rest` — requesting a `Moving`-state sprite will fail
-  to load. `typeToString`'s default case and `colorToString`'s fallback also produce
-  wrong-but-plausible values for `Empty`/`None` inputs rather than erroring (latent,
-  since `Renderer` filters out `Empty` pieces before calling it). **Untouched by the
-  motion/rest/jump-visualization work** — all of that is done via `BoardCanvas`
-  overlay primitives, not sprite-state swapping, so this gap is still live.
+  individual `render()` call was just slow). State-to-folder-name conversion is no
+  longer a private `SpriteManager` method — it now calls the free function
+  `pieceStateToString` (`common/enums/PieceStateToString.h`), which is what
+  `getPath`/`getPieceSprite`'s cache key both call through. **Still out of sync with
+  the actual on-disk folder names for two of the four values**: it emits
+  `"moving"`/`"captured"` but the folders are `idle/move/jump/short_rest/long_rest` —
+  requesting a `Moving`-state sprite will still fail to load. Only `Idle → "idle"` and
+  the new `Jump → "jump"` mapping are correct. `typeToString`'s default case and
+  `colorToString`'s fallback also produce wrong-but-plausible values for
+  `Empty`/`None` inputs rather than erroring (latent, since `Renderer` filters out
+  `Empty` pieces before calling it).
+- `AnimationFrame` — a small UI-layer collaborator (constructed with a `const
+  BoardCanvas&`) that is the **only** place deciding, per board square, what to
+  render: `resolve(const GameView&, row, col)` returns a `Resolution{PieceState
+  state; int frame; PixelPosition position;}`. It checks whether that square is the
+  `from` of an active `Motion` (→ `PieceState::Idle`, frame `1`, interpolated pixel
+  position via `canvas.getInterpolatedPosition`) or the position of an active `Jump`
+  (→ `PieceState::Jump`, a frame computed from `jump.getProgress(currentTime)` via a
+  private non-looping `frameIndexForProgress(progress, frameCount)` helper — hardcoded
+  `frameCount = 5` to match the on-disk sprite count, since no JSON parsing exists yet
+  to read it from `config.json`, same MVP simplification as the rest of the codebase —
+  and `canvas.getCellPosition(row, col)`), or neither (→ `PieceState::Idle`, frame `1`,
+  `canvas.getCellPosition(row, col)`). This is what makes the jumping-piece sprite
+  animation possible; `BoardCanvas` still owns the actual pixel arithmetic
+  (`AnimationFrame` only decides *which* `BoardCanvas` method's result to use), and
+  `SpriteManager` still owns turning `(PieceView, PieceState, frame)` into an `Img`.
 - `Renderer::render(const GameView&)` — `canvas.beginFrame()`, then: iterates all
-  cells and draws each non-`Empty` piece at rest position **except** the cell
-  matching `motion.getFrom()` when a motion is active (that piece is drawn
-  separately, below, at its interpolated position instead — otherwise it would
-  render twice); if a motion is active, computes `motion.getProgress(currentTime)`
-  and draws that piece at `canvas.getInterpolatedPosition(from, to, progress)`; if a
-  jump is active, draws a jump highlight at its position; draws a rest-progress bar
-  for every `RestView` in the snapshot; if there's a selection, draws a selection
-  highlight; finally `canvas.show()`. Still always requests **`PieceState::Idle`,
-  frame `1`** from `SpriteManager` regardless of the piece's actual state — no
-  sprite-level animation/cooldown visuals, only the `BoardCanvas` overlay
-  primitives above. Purely a drawing operation: `void`, no return value, no
-  awareness that a "frame" is part of a loop or that input exists.
+  cells, skips `Empty` squares, and for every occupied square asks
+  `AnimationFrame::resolve(gameView, row, col)` for the `{state, frame, position}` to
+  draw, fetches that sprite from `SpriteManager`, and draws it at that pixel position
+  via `canvas.drawPieceAtPixel`. `Renderer` itself no longer contains any
+  motion/jump-specific branching (no more "skip this cell, it's drawn separately
+  below" special case) — that decision now lives entirely in `AnimationFrame`. After
+  the per-square loop: if a jump is active, draws a jump highlight at its position;
+  draws a rest-progress bar for every `RestView` in the snapshot; if there's a
+  selection, draws a selection highlight; finally `canvas.show()`. Purely a drawing
+  operation: `void`, no return value, no awareness that a "frame" is part of a loop or
+  that input exists.
 - `GameLoop` — the live game loop and the **only** place in `UI/` that touches
   input or `logic/*`. Constructed with `Controller&`, `Renderer&`, `BoardCanvas&`.
   `run()`: registers `cv::setMouseCallback` on `canvas.getWindowName()` once (a static
@@ -420,17 +445,19 @@ Two on-disk data formats exist but are **not read by any current C++ code**:
 
 The logic layer is now wired into the graphical executable:
 `main.cpp` calls `GameFactory::createNewGame()` → `Controller` → constructs
-`BoardCanvas`/`SpriteManager`/`Renderer` → hands them plus the `Controller` to a
-`GameLoop` and calls `run()`. This is now the only entry point needed to play a game
-with a live board, mouse input, and real-time piece movement.
+`BoardCanvas`/`SpriteManager`/`AnimationFrame`/`Renderer` → hands them plus the
+`Controller` to a `GameLoop` and calls `run()`. This is now the only entry point
+needed to play a game with a live board, mouse input, and real-time piece movement.
 
 What's still missing/rough:
-- No **sprite-level** animation/cooldown-state visuals — `Renderer` still always
-  requests `PieceState::Idle` frame `1` from `SpriteManager`, whose `stateToString`
-  remains out of sync with the on-disk folder names (see gaps list). Motion/rest/jump
-  now **do** have visuals, but via `BoardCanvas` overlay primitives (interpolated
-  position, colored outlines, a progress bar) layered on top of the always-Idle
-  sprite, not via swapping to a different sprite state.
+- **Sprite-level animation exists only for `Jump`** — `AnimationFrame` swaps to the
+  real `PieceState::Jump` sprite frames (5 frames, non-looping) while a jump is
+  active. `Motion` (traveling pieces) and the `Rest` cooldowns still render via
+  `PieceState::Idle` frame `1` plus `BoardCanvas` overlay primitives (interpolated
+  position, colored outlines, a progress bar) rather than their own sprite states —
+  `SpriteManager`'s `pieceStateToString` mapping for `Moving`/`Captured` is still out
+  of sync with the on-disk folder names (see gaps list), so a `Moving`-state sprite
+  request would still fail to load if one were ever made.
 - No visual feedback for game-over — the loop just stops; nothing is drawn to signal
   who won or that the window is about to close.
 - The text-only REPL (`CommandProcessor` / `src/tests/main.cpp`) still exists
@@ -454,10 +481,12 @@ for now that it's relied on by `Controller::getBoardView()`.
    `UI/GameLoop` now provide a live, playable loop (see "Current state of integration").
 2. ~~`BoardView(const Board&)` produces a wrongly-ordered/sparse vector~~ — fixed: it
    now builds a dense, row-major vector consistent with `getPiece(row, col)`'s indexing.
-3. `PieceState` enum (3 values) doesn't cover the on-disk cooldown states (`jump`,
-   `short_rest`, `long_rest`) that the real-time mechanic needs for visual feedback,
-   and `SpriteManager::stateToString` doesn't even match the 3 values it does have
-   (`"moving"` vs. on-disk `"move"`).
+3. `PieceState` enum (4 values: `Idle, Moving, Captured, Jump`) still doesn't cover the
+   on-disk cooldown states `short_rest`/`long_rest` that the real-time mechanic needs
+   for visual feedback, and `pieceStateToString` (`common/enums/PieceStateToString.h`,
+   used by `SpriteManager`) still doesn't match on-disk folder names for `Moving`
+   (`"moving"` vs. on-disk `"move"`). Only `Idle`/`Jump` are correct as of the jump
+   animation work.
 4. `Piece::setState` is never called outside tests — no production code marks a piece
    as `Moving`/`Captured`.
 5. `RealTimeArbiter` supports only one in-flight motion/jump globally, not per-piece —
@@ -492,7 +521,7 @@ for now that it's relied on by `Controller::getBoardView()`.
 | Change the initial/starting board setup | `src/logic/IO/GameFactory.cpp` (`createClassicBoard`) |
 | Change the live loop, mouse handling, or when the game stops | `src/UI/GameLoop.cpp` |
 | Change the per-frame data the UI renders from | `src/logic/Controller/Controller.cpp` (`getGameView`), `src/common/DTO/GameView.h`/`MotionView.h`/`JumpView.h`/`RestView.h` |
-| Change the traveling-piece animation, selection/jump highlights, or rest-progress bar | `src/UI/Renderer.cpp` (draw order/what triggers each), `src/UI/BoardCanvas.cpp` (pixel math, colors/thicknesses) |
-| Fix/extend sprite rendering | `src/UI/SpriteManager.cpp` (state-name mismatch), `src/UI/Renderer.cpp` (hardcoded Idle/frame 1) |
+| Change the traveling-piece animation, jumping-piece animation, selection/jump highlights, or rest-progress bar | `src/UI/AnimationFrame.cpp` (which state/frame/position a square renders), `src/UI/Renderer.cpp` (draw order for the overlays), `src/UI/BoardCanvas.cpp` (pixel math, colors/thicknesses) |
+| Fix/extend sprite rendering | `src/common/enums/PieceStateToString.h` (state-name mismatch for `Moving`/`Captured`), `src/UI/SpriteManager.cpp` (path/cache-key building), `src/UI/AnimationFrame.cpp` (which state/frame a piece requests) |
 | Change how pixel clicks map to board cells | `src/logic/Controller/BoardMapper.cpp`, fed via `Controller::handlePixelClick`/`handlePixelJump` |
 | Add/adjust tests | `src/tests/logic_tests/<matching-folder>/`, `src/tests/common_tests/` |

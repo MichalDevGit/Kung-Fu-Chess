@@ -3,40 +3,25 @@
 
 #include "Renderer.h"
 
-Renderer::Renderer(BoardCanvas& canvas, SpriteManager& spriteManager)
-    : canvas(canvas), spriteManager(spriteManager) {}
+Renderer::Renderer(BoardCanvas& canvas, SpriteManager& spriteManager, AnimationFrame& animationFrame)
+    : canvas(canvas), spriteManager(spriteManager), animationFrame(animationFrame) {}
 
 void Renderer::render(const GameView& gameView) {
 
     canvas.beginFrame();
 
     const BoardView& board = gameView.getBoard();
-    const MotionView& motion = gameView.getMotion();
 
     for (int row = 0; row < board.getRows(); ++row) {
         for (int col = 0; col < board.getCols(); ++col) {
-            if (motion.isActive() &&
-                motion.getFrom().getRow() == row &&
-                motion.getFrom().getCol() == col) {
-                continue;  // drawn separately below, at its interpolated position
-            }
-
             PieceView piece = board.getPiece(row, col);
-            if (piece.getType() != PieceType::Empty) {
-                Img sprite = spriteManager.getPieceSprite(piece, PieceState::Idle, 1);
-                canvas.drawPiece(sprite, row, col);
+            if (piece.getType() == PieceType::Empty) {
+                continue;
             }
-        }
-    }
 
-    if (motion.isActive()) {
-        PieceView movingPiece = board.getPiece(motion.getFrom().getRow(), motion.getFrom().getCol());
-
-        if (movingPiece.getType() != PieceType::Empty) {
-            double progress = motion.getProgress(gameView.getCurrentTime());
-            PixelPosition pixelPos = canvas.getInterpolatedPosition(motion.getFrom(), motion.getTo(), progress);
-            Img sprite = spriteManager.getPieceSprite(movingPiece, PieceState::Idle, 1);
-            canvas.drawPieceAtPixel(sprite, pixelPos);
+            AnimationFrame::Resolution resolution = animationFrame.resolve(gameView, row, col);
+            Img sprite = spriteManager.getPieceSprite(piece, resolution.state, resolution.frame);
+            canvas.drawPieceAtPixel(sprite, resolution.position);
         }
     }
 

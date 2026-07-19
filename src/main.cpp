@@ -1,5 +1,6 @@
 #include "UI/BoardCanvas.h"
 #include "UI/SpriteManager.h"
+#include "UI/AnimationFrame.h"
 #include "UI/Renderer.h"
 #include "UI/GameLoop.h"
 #include "logic/Controller/Controller.h"
@@ -13,7 +14,8 @@ int main() {
 
         BoardCanvas canvas("assets/board_classic.png", 100);
         SpriteManager spriteManager("assets", "pieces3", 100);
-        Renderer renderer(canvas, spriteManager);
+        AnimationFrame animationFrame(canvas);
+        Renderer renderer(canvas, spriteManager, animationFrame);
 
         GameLoop gameLoop(controller, renderer, canvas);
         gameLoop.run();
