@@ -19,7 +19,7 @@ GameLoop::GameLoop(Controller& controller, Renderer& renderer, BoardCanvas& canv
 
 void GameLoop::run()
 {
-    cv::namedWindow(canvas.getWindowName());
+    cv::namedWindow(canvas.getWindowName(), cv::WINDOW_NORMAL);
     cv::setMouseCallback(canvas.getWindowName(), &GameLoop::mouseCallback, this);
 
     auto lastTick = std::chrono::steady_clock::now();

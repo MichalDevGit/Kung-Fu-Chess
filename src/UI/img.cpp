@@ -93,86 +93,6 @@ Img Img::clone() const
     return result;
 }
 
-
-// void Img::draw_on(Img& other_img, int x, int y) const
-// {
-//     if (img.empty() || other_img.img.empty())
-//     {
-//         throw std::runtime_error(
-//             "Both images must be loaded before drawing.");
-//     }
-
-
-//     cv::Mat source_img = img;
-//     cv::Mat target_img = other_img.img;
-
-
-//     if (source_img.channels() != target_img.channels())
-//     {
-//         if (source_img.channels() == 3 &&
-//             target_img.channels() == 4)
-//         {
-//             cv::cvtColor(source_img,
-//                          source_img,
-//                          cv::COLOR_BGR2BGRA);
-//         }
-//         else if (source_img.channels() == 4 &&
-//                  target_img.channels() == 3)
-//         {
-//             cv::cvtColor(source_img,
-//                          source_img,
-//                          cv::COLOR_BGRA2BGR);
-//         }
-//     }
-
-
-//     int h = source_img.rows;
-//     int w = source_img.cols;
-
-//     int H = target_img.rows;
-//     int W = target_img.cols;
-
-
-//     if (x < 0 || y < 0 || x + w > W || y + h > H)
-//     {
-//         throw std::runtime_error(
-//             "Image does not fit at the specified position.");
-//     }
-
-
-//     cv::Mat roi = target_img(cv::Rect(x, y, w, h));
-
-
-//     if (source_img.channels() == 4)
-//     {
-//         std::vector<cv::Mat> channels;
-
-//         cv::split(source_img, channels);
-
-//         cv::Mat alpha = channels[3];
-
-//         for (int row = 0; row < h; row++)
-//         {
-//             for (int col = 0; col < w; col++)
-//             {
-//                 double a = alpha.at<uchar>(row, col) / 255.0;
-
-//                 for (int c = 0; c < 3; c++)
-//                 {
-//                     roi.at<cv::Vec3b>(row, col)[c] =
-//                         static_cast<uchar>(
-//                             a * channels[c].at<uchar>(row, col) +
-//                             (1 - a) * roi.at<cv::Vec3b>(row, col)[c]);
-//                 }
-//             }
-//         }
-//     }
-//     else
-//     {
-//         source_img.copyTo(roi);
-//     }
-// }
-
 void Img::draw_on(Img& other_img, int x, int y) {
     if (img.empty() || other_img.img.empty()) {
         throw std::runtime_error("Both images must be loaded before drawing.");
@@ -266,13 +186,6 @@ void Img::show()
     if (img.empty())
     {
         throw std::runtime_error("Image not loaded.");
-    }
-
-    static bool windowCreated = false;
-    if (!windowCreated)
-    {
-        cv::namedWindow(windowName(), cv::WINDOW_NORMAL);
-        windowCreated = true;
     }
 
     cv::imshow(windowName(), img);
