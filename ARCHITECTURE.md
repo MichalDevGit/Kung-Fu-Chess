@@ -6,12 +6,14 @@ eventually look. Read this before exploring the source tree — it should make a
 re-read of `src/` unnecessary for most tasks. If you change the architecture in a way
 that makes a section below wrong, update that section in the same change.
 
-Last reviewed: 2026-07-20, against the source tree as of commit `5b455c3`, updated to
-reflect: the new top-level `server/` directory — the first slice of turning KungFuChess
-into a client/server game. As of this review it contains **only** a SQLite-backed
-persistence layer (a `users` table plus `Database`/`UserRepository` C++ classes,
-built as their own CMake targets); there is no networking, no rooms/sessions, and
-nothing in `src/` talks to it yet. See "Server / persistence layer" below.
+Last reviewed: 2026-07-21, against the source tree as of commit `64e6d30`, updated to
+reflect: the first networking slice on top of `server/`'s persistence layer, plus a new
+top-level `client/` directory and a new top-level `protocol/` directory. `server/` now
+runs a real `ws://127.0.0.1:9002` WebSocket server (via `ixwebsocket`) that handles
+`register`/`login` requests, backed by the existing `UserRepository`; `client/` is a
+standalone CLI executable (a text-based stand-in for the future GUI client) that talks
+to it. There are still no rooms/sessions/game commands over the wire — see "Server /
+persistence / networking layer" below for exactly what does and doesn't exist yet.
 
 Earlier updates reflect: per-piece post-move `Rest` in `RealTimeArbiter`/`GameEngine`; the new
 `GameView` aggregate DTO (which **replaces** `Controller::getBoardView()`) carrying
@@ -64,13 +66,16 @@ loop does and doesn't do yet (no animations, no cooldown visuals).
   in `lib/bin`), version 4.5.1. Debug links `opencv_world451d`, Release links
   `opencv_world451`. DLLs are copied next to each executable post-build.
 - C++ standard: 17.
-- Root `CMakeLists.txt` ends with `add_subdirectory(server)`, which builds the
-  persistence layer described below — a completely separate CMake project tree from
-  `KungFuChess`/`KungFuChess_tests`, with its own `FetchContent`-fetched dependency
-  (`SQLiteCpp`, pulled from GitHub and built from source rather than vendored like
-  OpenCV). Building `KungFuChess`/`KungFuChess_tests` does not require network access
-  the way building `server`'s targets does (first configure fetches `SQLiteCpp` from
-  GitHub).
+- Root `CMakeLists.txt` also `FetchContent`s `ixwebsocket` (pinned `v12.0.1`, built with
+  `USE_TLS`/`USE_ZLIB` off — plain `ws://` only, no compression) and `nlohmann_json`
+  (pinned `v3.12.0`, header-only) **once, at the root**, before `add_subdirectory(protocol)`,
+  `add_subdirectory(server)`, `add_subdirectory(client)` — both `server/` and `client/`
+  link against these, and `FetchContent_MakeAvailable` for the same package from two
+  different subdirectories would redefine its targets. `server/CMakeLists.txt` still
+  separately `FetchContent`s `SQLiteCpp` (pinned `3.3.1`) itself, since only `server/`
+  needs it. Building `KungFuChess`/`KungFuChess_tests` does not require network access
+  the way building `protocol`/`server`/`client`'s targets does (first configure fetches
+  `SQLiteCpp`, `ixwebsocket`, and `nlohmann_json` from GitHub).
 
 ## Module map and dependency direction
 
@@ -553,43 +558,120 @@ mocking (everything is tested against real concrete objects). Notably **no tests
 conversion constructors, including `BoardView(const Board&)` — worth adding coverage
 for now that it's relied on by `Controller::getBoardView()`.
 
-## Server / persistence layer (`server/`)
+## Server / persistence / networking layer (`server/`, `protocol/`, `client/`)
 
-A new, independent top-level directory — not under `src/`, and not (yet) linked into
-`KungFuChess`/`KungFuChess_tests` at all. It's the first step of turning this into a
-client/server game: for now it's just a SQLite persistence layer with no networking,
-built and tested entirely on its own.
+Three independent top-level directories — none under `src/`, and none linked into
+`KungFuChess`/`KungFuChess_tests`. Together they're the first networking slice of
+turning this into a client/server game: a SQLite persistence layer (as before), a real
+`ws://127.0.0.1:9002` WebSocket server handling `register`/`login`, a JSON message
+contract shared by both ends, and a standalone CLI client that speaks it. Still no
+rooms/sessions/spectators, no `games` table, no game-command message types — only auth
+exists over the wire so far.
 
-- `server/CMakeLists.txt` — `FetchContent`s `SRombauts/SQLiteCpp` (pinned to `3.3.1`,
-  with `GIT_SUBMODULES ""` since it vendors the SQLite3 amalgamation as a git
-  submodule) and builds two targets: `KungFuChessPersistence` (a static library) and
-  `KungFuChessPersistence_tests` (a doctest executable linking it). The test target
-  reuses the single-header `src/tests/doctest.h` from the main project (via an
-  include path back to `${CMAKE_SOURCE_DIR}/src`) instead of fetching a second copy —
-  same file, two independent test binaries.
-- `server/src/persistence/UserRecord.h` — a plain `{int id; std::string username,
-  password; int score;}` struct mirroring the `users` table row. Deliberately named
-  `UserRecord`, not `User`: a later networking step is expected to introduce a
-  richer `Player`/session-carrying domain object, and keeping today's DB-row struct
-  separate avoids a rename when that happens.
-- `server/src/persistence/Database` — owns a `SQLite::Database` (from SQLiteCpp).
-  Constructor takes a path (a real file path for normal use, `":memory:"` for tests)
-  and immediately runs `CREATE TABLE IF NOT EXISTS users (...)`. `raw()` exposes the
-  underlying `SQLite::Database&` so `UserRepository` can prepare its own statements
-  against the same connection — `Database` itself has no query methods.
-- `server/src/persistence/UserRepository` — all `users`-table access:
-  `createUser`/`findByUsername`/`findById`/`verifyPassword`/`updateScore`. Passwords
-  are stored and compared **in plain text** — there is no hashing yet (deliberately
-  postponed to a dedicated later security step, so no hashing dependency has been
-  pulled in). `createUser` lets SQLite's `UNIQUE` constraint on `username` throw
-  `SQLite::Exception` straight through on a duplicate, rather than pre-checking.
-- `server/tests/user_repository_test.cpp` — doctest, same conventions as
-  `src/tests/logic_tests/*` (one `TEST_CASE`, `SUBCASE`s per scenario, no mocking),
-  against a real in-memory (`":memory:"`) database per test case.
+### `protocol/` — shared JSON message contract
 
-Nothing here is wired to anything in `src/` yet: no networking (no Asio), no
-rooms/sessions/spectators, no `games` table, no server executable with a `main()`.
-Those are follow-up steps.
+Header-only, depended on by both `server/` and `client/` so neither side duplicates the
+wire format. `add_subdirectory(protocol)` in the root `CMakeLists.txt` builds it as an
+`INTERFACE` target, `KungFuChessProtocol`, linking `nlohmann_json::nlohmann_json`.
+
+- `protocol/include/protocol/MessageType.h` — the JSON envelope's `"type"` string
+  constants: `register`, `login`, `register_result`, `login_result`, `error`.
+- `protocol/include/protocol/Message.h` — `RegisterRequest`/`LoginRequest` (client→server)
+  and `RegisterResult`/`LoginResult`/`ErrorResult` (server→client) structs, each with an
+  in-class `toJson()`/`fromJson()` pair (built on `nlohmann::json`) — the only place that
+  knows that message's field names. `error` fields are short machine-readable codes
+  (`username_taken`, `invalid_credentials`, `malformed_request`, `unknown_type`), not
+  human text, so both the CLI and a future GUI can branch on them directly. Free function
+  `readType(const nlohmann::json&)` reads the envelope's `"type"` field (throws
+  `nlohmann::json::exception` on a missing field, same as a malformed-JSON parse — callers
+  wrap the whole decode step in one `try`/`catch`).
+
+### `server/` — persistence + WebSocket networking
+
+- `server/src/persistence/*` — unchanged from before: `UserRecord` (plain DB-row struct),
+  `Database` (owns the `SQLite::Database` connection, creates the `users` table),
+  `UserRepository` (`createUser`/`findByUsername`/`findById`/`verifyPassword`/
+  `updateScore`; passwords still stored/compared **in plain text**, hashing deliberately
+  postponed). `createUser` still lets SQLite's `UNIQUE` constraint on `username` throw
+  `SQLite::Exception` straight through on a duplicate.
+- `server/src/services/AuthService` — new. Thin, networking-agnostic wrapper around
+  `UserRepository`: `registerUser(username, password)` → `auth::RegisterOutcome{success,
+  userId, error}`, `login(username, password)` → `auth::LoginOutcome{success, userId,
+  score, error}`. Catches `UserRepository::createUser`'s `SQLite::Exception` and turns it
+  into `error = "username_taken"`; `login` calls `verifyPassword` then re-fetches the row
+  for `userId`/`score`. Guards every call with its own `std::mutex` — `Database`/
+  `UserRepository` share one non-synchronized SQLite connection, and once wired into
+  `WebSocketServer` this is called concurrently from every connected client.
+- `server/src/handlers/AuthRequestHandler` — new. The only translation layer between raw
+  JSON and `AuthService`: `handle(rawJson)` parses the envelope (via `protocol::readType`),
+  dispatches `register`/`login` to the matching `AuthService` call, and serializes the
+  result back to a JSON string via the matching `protocol::*Result::toJson()`. Unknown
+  `"type"` → `ErrorResult{"unknown_type"}`; any `nlohmann::json::exception` (bad JSON,
+  missing fields) → `ErrorResult{"malformed_request"}`. Never throws out of `handle()` —
+  one bad message can't take down the server or any other connection. Knows nothing about
+  ixwebsocket.
+- `server/src/network/WebSocketServer` — new, and the **only** file in the codebase that
+  includes ixwebsocket's server-side headers (a small pimpl wraps `ix::WebSocketServer`
+  behind a plain `std::function<std::string(const std::string&)> RequestHandler`
+  constructor argument). For every inbound text message on any connection, it calls the
+  handler and sends the return value back on that same connection
+  (`ix::WebSocketServer::setOnClientMessageCallback`, which hands back the specific
+  `ix::WebSocket&` the message arrived on). `start()` calls `listen()` then `start()` on
+  the underlying server (throws `std::runtime_error` if the port can't be bound); `wait()`
+  blocks the calling thread. Calls `ix::initNetSystem()`/`uninitNetSystem()` (required for
+  Winsock on Windows, a no-op elsewhere) in its constructor/destructor.
+- `server/src/main.cpp` — now the real server entry point (previously a demo that just
+  seeded/printed two users). Builds `Database` → `UserRepository` → `AuthService` →
+  `AuthRequestHandler`, constructs a `WebSocketServer(9002, handler)`, calls `start()` then
+  `wait()` — blocks forever serving requests until the process is killed.
+- `server/CMakeLists.txt` — target graph: `KungFuChessPersistence` (unchanged) →
+  `KungFuChessAuth` (new static lib, `services/` — depends only on Persistence, **no**
+  ixwebsocket, so it stays fast/dependency-light to unit test) → `KungFuChessNetwork` (new
+  static lib, `handlers/` + `network/` — depends on Auth + `KungFuChessProtocol` +
+  `ixwebsocket::ixwebsocket`) → `KungFuChessServer` executable (`main.cpp`, depends on
+  Network). Still separately `FetchContent`s `SRombauts/SQLiteCpp` (server-only; see Build
+  system for why `ixwebsocket`/`nlohmann_json` are fetched at the root instead).
+  `KungFuChessPersistence_tests` now additionally links `KungFuChessAuth`, so
+  `server/tests/auth_service_test.cpp` (new — same doctest conventions as
+  `user_repository_test.cpp`, in-memory DB, no sockets) builds into the same binary as
+  `server/tests/user_repository_test.cpp`.
+
+### `client/` — standalone CLI client
+
+A separate top-level directory/executable, not part of `server/`'s CMake tree, and
+deliberately structured so a future GUI client can reuse the network half unchanged.
+
+- `client/src/network/WebSocketClient` — the **only** file including ixwebsocket's
+  client-side headers (pimpl around `ix::WebSocket`). `start()` connects asynchronously in
+  the background (auto-reconnecting on drop); `waitForConnection(timeoutMs)` blocks on a
+  `std::condition_variable` signaled from the `ix::WebSocketMessageType::Open` case of the
+  internal message callback — sending before the handshake completes silently drops the
+  message (ixwebsocket only queues once the socket is actually open), so callers must wait
+  for this before calling `send()`. `send(json)` forwards to `ix::WebSocket::send`;
+  inbound `ix::WebSocketMessageType::Message`s are handed to the caller's `MessageHandler`
+  callback, invoked on ixwebsocket's own background thread. Built as its own static lib
+  target, `KungFuChessClientNetwork`, specifically so a future GUI client links this exact
+  target instead of re-implementing it.
+- `client/src/cli/CliShell` — the interactive `std::cin` loop: parses
+  `register <user> <pass>` / `login <user> <pass>` / `help` / `quit`/`exit`, builds the
+  matching `protocol::RegisterRequest`/`LoginRequest` and sends it, and prints `[server]
+  ...` for every response as it arrives. Takes a `std::mutex&` (owned by `main.cpp`,
+  shared with the `WebSocketClient` message callback) and locks it around every `std::cout`
+  write so prompts/usage text and async server responses — printed from two different
+  threads — never interleave mid-line.
+- `client/src/main.cpp` — connects a `WebSocketClient` to `ws://127.0.0.1:9002`, calls
+  `waitForConnection(5000)` (prints an error and exits `1` on timeout — e.g. server not
+  running), then runs a `CliShell` until `quit`/`exit`/EOF.
+- `client/CMakeLists.txt` — `KungFuChessClientNetwork` (static lib, `network/` — depends on
+  `KungFuChessProtocol` + `ixwebsocket::ixwebsocket`) → `KungFuChessCliClient` executable
+  (`main.cpp` + `cli/`, depends on ClientNetwork).
+
+Not yet done: any game-command message type (`move`, `jump`, etc.) or rooms/sessions —
+the server has no concept of an in-progress game at all yet, so there's nothing for a
+game command to address; password hashing (still plain text, as before); `wss://`/TLS
+(plain `ws://` only); request/response correlation IDs (the CLI just prints responses
+as they arrive, fine for one interactive user issuing one request at a time — would need
+revisiting if a client ever has multiple requests in flight concurrently).
 
 ## Known gaps / things to be careful about when editing
 
@@ -621,7 +703,10 @@ Those are follow-up steps.
    (`BoardMapper`, `CoordinateConverter`, `BoardCanvas`'s constructor arg in
    `main.cpp`) with no shared constant.
 7. `config.json` (animation/physics metadata) and `board.csv` exist on disk but are
-   parsed by no current code (no JSON library is even linked).
+   parsed by no current code. `KungFuChess`/`KungFuChess_tests` (the `src/` build) still
+   link no JSON library; `nlohmann_json` is now linked, but only into `protocol`/
+   `server`/`client` — pulling it into `src/` too, and actually parsing these files with
+   it, is still a follow-up.
 8. No check/checkmate/castling/en-passant/stalemate — only raw movement legality plus
    king-capture-ends-game.
 9. `src/tests/main.cpp` (the REPL entry point) is not attached to any current CMake
@@ -647,3 +732,8 @@ Those are follow-up steps.
 | Change how pixel clicks map to board cells | `src/logic/Controller/BoardMapper.cpp`, fed via `Controller::handlePixelClick`/`handlePixelJump` |
 | Add/adjust tests | `src/tests/logic_tests/<matching-folder>/`, `src/tests/common_tests/` |
 | Change the `users` table / user persistence | `server/src/persistence/Database.cpp` (schema), `server/src/persistence/UserRepository.cpp`; tests in `server/tests/user_repository_test.cpp` |
+| Change register/login business logic (not the DB rows) | `server/src/services/AuthService.cpp`; tests in `server/tests/auth_service_test.cpp` |
+| Change the JSON wire format for a message | `protocol/include/protocol/Message.h` (field names, `toJson`/`fromJson`), `protocol/include/protocol/MessageType.h` (the `"type"` string) — both `server/src/handlers/AuthRequestHandler.cpp` and `client/src/cli/CliShell.cpp` build/consume these |
+| Add a new WebSocket message type/command | `server/src/handlers/AuthRequestHandler.cpp` (dispatch on `protocol::readType`), `protocol/include/protocol/Message.h`/`MessageType.h` (new request/result structs), `client/src/cli/CliShell.cpp` (new command) — `server/src/network/WebSocketServer` and `client/src/network/WebSocketClient` themselves don't need to change |
+| Change how the server binds/accepts WebSocket connections | `server/src/network/WebSocketServer.cpp` (the only file that includes ixwebsocket's server headers) |
+| Change how the CLI client connects or sends/receives | `client/src/network/WebSocketClient.cpp` (the only file that includes ixwebsocket's client headers), `client/src/cli/CliShell.cpp` (the command loop) |
