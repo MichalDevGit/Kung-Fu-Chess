@@ -74,3 +74,6 @@ endforeach()
 # Print found sources for debugging
 message(STATUS "Game source files: ${GAME_SOURCES}")
 message(STATUS "Test source files: ${TEST_SOURCES}")
+
+# ---- Server (persistence layer; networking comes in a later step) ----
+add_subdirectory(server)

@@ -6,8 +6,14 @@ eventually look. Read this before exploring the source tree — it should make a
 re-read of `src/` unnecessary for most tasks. If you change the architecture in a way
 that makes a section below wrong, update that section in the same change.
 
-Last reviewed: 2026-07-19, against the source tree as of commit `991852d`, updated to
-reflect: per-piece post-move `Rest` in `RealTimeArbiter`/`GameEngine`; the new
+Last reviewed: 2026-07-20, against the source tree as of commit `5b455c3`, updated to
+reflect: the new top-level `server/` directory — the first slice of turning KungFuChess
+into a client/server game. As of this review it contains **only** a SQLite-backed
+persistence layer (a `users` table plus `Database`/`UserRepository` C++ classes,
+built as their own CMake targets); there is no networking, no rooms/sessions, and
+nothing in `src/` talks to it yet. See "Server / persistence layer" below.
+
+Earlier updates reflect: per-piece post-move `Rest` in `RealTimeArbiter`/`GameEngine`; the new
 `GameView` aggregate DTO (which **replaces** `Controller::getBoardView()`) carrying
 `MotionView`/`JumpView`/`RestView`/selection/current-time snapshots to the UI; the
 traveling-piece animation, selection highlight, jump highlight and rest-countdown
@@ -58,6 +64,13 @@ loop does and doesn't do yet (no animations, no cooldown visuals).
   in `lib/bin`), version 4.5.1. Debug links `opencv_world451d`, Release links
   `opencv_world451`. DLLs are copied next to each executable post-build.
 - C++ standard: 17.
+- Root `CMakeLists.txt` ends with `add_subdirectory(server)`, which builds the
+  persistence layer described below — a completely separate CMake project tree from
+  `KungFuChess`/`KungFuChess_tests`, with its own `FetchContent`-fetched dependency
+  (`SQLiteCpp`, pulled from GitHub and built from source rather than vendored like
+  OpenCV). Building `KungFuChess`/`KungFuChess_tests` does not require network access
+  the way building `server`'s targets does (first configure fetches `SQLiteCpp` from
+  GitHub).
 
 ## Module map and dependency direction
 
@@ -540,6 +553,44 @@ mocking (everything is tested against real concrete objects). Notably **no tests
 conversion constructors, including `BoardView(const Board&)` — worth adding coverage
 for now that it's relied on by `Controller::getBoardView()`.
 
+## Server / persistence layer (`server/`)
+
+A new, independent top-level directory — not under `src/`, and not (yet) linked into
+`KungFuChess`/`KungFuChess_tests` at all. It's the first step of turning this into a
+client/server game: for now it's just a SQLite persistence layer with no networking,
+built and tested entirely on its own.
+
+- `server/CMakeLists.txt` — `FetchContent`s `SRombauts/SQLiteCpp` (pinned to `3.3.1`,
+  with `GIT_SUBMODULES ""` since it vendors the SQLite3 amalgamation as a git
+  submodule) and builds two targets: `KungFuChessPersistence` (a static library) and
+  `KungFuChessPersistence_tests` (a doctest executable linking it). The test target
+  reuses the single-header `src/tests/doctest.h` from the main project (via an
+  include path back to `${CMAKE_SOURCE_DIR}/src`) instead of fetching a second copy —
+  same file, two independent test binaries.
+- `server/src/persistence/UserRecord.h` — a plain `{int id; std::string username,
+  password; int score;}` struct mirroring the `users` table row. Deliberately named
+  `UserRecord`, not `User`: a later networking step is expected to introduce a
+  richer `Player`/session-carrying domain object, and keeping today's DB-row struct
+  separate avoids a rename when that happens.
+- `server/src/persistence/Database` — owns a `SQLite::Database` (from SQLiteCpp).
+  Constructor takes a path (a real file path for normal use, `":memory:"` for tests)
+  and immediately runs `CREATE TABLE IF NOT EXISTS users (...)`. `raw()` exposes the
+  underlying `SQLite::Database&` so `UserRepository` can prepare its own statements
+  against the same connection — `Database` itself has no query methods.
+- `server/src/persistence/UserRepository` — all `users`-table access:
+  `createUser`/`findByUsername`/`findById`/`verifyPassword`/`updateScore`. Passwords
+  are stored and compared **in plain text** — there is no hashing yet (deliberately
+  postponed to a dedicated later security step, so no hashing dependency has been
+  pulled in). `createUser` lets SQLite's `UNIQUE` constraint on `username` throw
+  `SQLite::Exception` straight through on a duplicate, rather than pre-checking.
+- `server/tests/user_repository_test.cpp` — doctest, same conventions as
+  `src/tests/logic_tests/*` (one `TEST_CASE`, `SUBCASE`s per scenario, no mocking),
+  against a real in-memory (`":memory:"`) database per test case.
+
+Nothing here is wired to anything in `src/` yet: no networking (no Asio), no
+rooms/sessions/spectators, no `games` table, no server executable with a `main()`.
+Those are follow-up steps.
+
 ## Known gaps / things to be careful about when editing
 
 1. ~~Logic layer isn't wired into the graphical executable~~ — fixed: `GameFactory` +
@@ -595,3 +646,4 @@ for now that it's relied on by `Controller::getBoardView()`.
 | Fix/extend sprite rendering | `src/common/enums/PieceStateToString.h` (`Captured` has no backing on-disk folder), `src/UI/SpriteManager.cpp` (path/cache-key building), `src/UI/AnimationFrame.cpp` (which state/frame a piece requests) |
 | Change how pixel clicks map to board cells | `src/logic/Controller/BoardMapper.cpp`, fed via `Controller::handlePixelClick`/`handlePixelJump` |
 | Add/adjust tests | `src/tests/logic_tests/<matching-folder>/`, `src/tests/common_tests/` |
+| Change the `users` table / user persistence | `server/src/persistence/Database.cpp` (schema), `server/src/persistence/UserRepository.cpp`; tests in `server/tests/user_repository_test.cpp` |
