@@ -3,138 +3,148 @@
 This document is a standing reference for AI assistants (and humans) working on this
 codebase. It describes how the project is currently built, not how it should
 eventually look. Read this before exploring the source tree — it should make a full
-re-read of `src/` unnecessary for most tasks. If you change the architecture in a way
-that makes a section below wrong, update that section in the same change.
+re-read of the sources unnecessary for most tasks. If you change the architecture in a
+way that makes a section below wrong, update that section in the same change.
 
-Last reviewed: 2026-07-26, against the source tree as of commit `557112d`, updated to
-reflect: a new in-process publish/subscribe `EventBus` (`src/common/EventBus/`) — a
-generic, thread-safe, type-safe bus (routing keyed by each event struct's own C++ type,
-not an enum) that `GameEngine` now takes by reference and publishes to at the exact
-points certain state transitions already happened (`MoveExecutedEvent`,
-`PieceCapturedEvent`, `GameOverEvent`), plus a one-off `GameStartedEvent` published from
-`main.cpp` right after engine construction. It exists to decouple `GameEngine` from
-several planned-but-not-yet-built features (score persistence, move logging, sound
-effects, start/end animations) that will eventually subscribe to it — see "Event bus"
-below for the full design and exactly which events fire where; **nothing subscribes to
-it yet**, so this change has no visible effect on current gameplay.
-
-Earlier updates reflect: the first networking slice on top of `server/`'s persistence
-layer, plus a new top-level `client/` directory and a new top-level `protocol/`
-directory. `server/` now runs a real `ws://127.0.0.1:9002` WebSocket server (via
-`ixwebsocket`) that handles `register`/`login` requests, backed by the existing
-`UserRepository`; `client/` is a standalone CLI executable (a text-based stand-in for
-the future GUI client) that talks to it. There are still no rooms/sessions/game
-commands over the wire — see "Server / persistence / networking layer" below for
-exactly what does and doesn't exist yet. Also earlier: per-piece post-move `Rest` in `RealTimeArbiter`/`GameEngine`; the new
-`GameView` aggregate DTO (which **replaces** `Controller::getBoardView()`) carrying
-`MotionView`/`JumpView`/`RestView`/selection/current-time snapshots to the UI; the
-traveling-piece animation, selection highlight, jump highlight and rest-countdown
-rendering in `Renderer`/`BoardCanvas`; right-click-to-jump input in `GameLoop`; a
-fourth `PieceState::Jump` value with a real sprite-based jump animation (not just an
-overlay highlight), driven by the new `UI/AnimationFrame` collaborator; and the new
-`common/enums/PieceStateToString.h` free function that centralizes the
-`PieceState`-to-sprite-folder-name mapping (used by `SpriteManager`). Also updated to
-reflect a fifth `PieceState::LongRest` value, and, most recently, a sixth
-`PieceState::ShortRest` value plus a new `common/enums/RestKind.h` (`Long`/`Short`)
-that `Rest`/`RestView` now carry so post-*move* and post-*jump* cooldowns can be told
-apart even though both live in the same `RealTimeArbiter::restsByPieceId` map keyed
-only by piece id: `GameEngine` now starts a `RestKind::Short` rest
-(`JUMP_REST_DURATION_MILLIS = 1000`) for a piece both when its `Jump` times out
-naturally (`settleCompletedJumps`) and when its `Jump` is consumed early by a
-successful ambush-capture (the special case inside `executeMove`) — previously
-neither path started any rest at all. `AnimationFrame::resolve` branches on
-`RestView::getKind()` to pick `PieceState::LongRest` vs `PieceState::ShortRest` (each
-its own real sprite animation, 5 frames, non-looping, same `frameIndexForProgress`
-helper as `Jump`), and `BoardCanvas::drawRestProgress` takes a `RestKind` to pick a
-visually distinct bar color (`REST_BAR_COLOR` orange for `Long`,
-`SHORT_REST_BAR_COLOR` green for `Short`) alongside the sprite difference.
+Last reviewed: 2026-07-26, against the source tree as of the networked client/server
+split (six phases, tracked in that order): (1) `src/common/` promoted to a shared
+top-level `common/` library; (2) the domain logic (`src/logic/*`) moved to
+`server/src/game/` as the server's authoritative simulation; (3) `protocol/` extended
+with game-session messages (`join_game`/`move`/`jump`/`game_view`/`game_started`/
+`game_over`) and every `common/DTO` type given its own `toJson()`/`fromJson()`;
+(4) `server/src/services/GameSession` + `GameSessionManager` +
+`server/src/handlers/GameRequestHandler` built to host the authoritative game and
+dispatch JSON commands to it, plus a server-owned tick loop; (5) `src/UI/*` moved to
+`client/src/ui/`, and a new `client/src/game/GameClient` built as the network-backed
+replacement for a locally-held `Controller&`; (6) the now-empty `src/` deleted
+entirely, retiring the old single-process "hotseat" executable for good. **This is now
+a real client/server game**: `server/` hosts the one authoritative `GameSession`,
+`client/`'s GUI (`KungFuChessGuiClient`) is a thin renderer that only ever talks to it
+over `ws://` JSON messages — there is no in-process path left connecting UI to game
+logic. See "Server / persistence / networking layer" below for the full design,
+including a real limitation worth knowing about before extending it further: there is
+no real server-to-client push yet, so a connected client's view of the game only
+refreshes when *it* sends a `move`/`jump` request, not continuously.
 
 ## What this project is
 
 "KungFuChess" is a real-time chess variant (no turns — in the classic Kung Fu Chess
-rules, pieces move independently with per-piece cooldowns) implemented in **C++17**,
-rendered with **OpenCV**, built with **CMake**. It is an early-stage / in-progress
-codebase: the domain logic (rules, move validation, real-time timing) is fairly well
-developed and unit-tested, and — as of this review — it **is** wired into a live
-graphical executable via `GameFactory` (initial board setup) and `UI/GameLoop` (the
-render/input loop). See "Current state of integration" below for exactly what that
-loop does and doesn't do yet (no animations, no cooldown visuals).
+rules, pieces move independently with per-piece cooldowns), implemented in **C++17**
+across three cooperating processes-worth of code: `server/` (persistence, the
+authoritative game engine, and the WebSocket API), `client/` (a GUI client rendered
+with **OpenCV**, plus a text-based CLI client), and `protocol/`/`common/` (the shared
+JSON contract and shared value types both ends link). It is an early-stage /
+in-progress codebase: the domain logic (rules, move validation, real-time timing) is
+fairly well developed and unit-tested; the network layer covers session join and
+move/jump commands but not yet real server-push, rooms/matchmaking beyond one implicit
+session, or reconnect handling.
 
 ## Build system
 
-- Root `CMakeLists.txt` globs all `.cpp` under `src/` and splits them into two targets:
-  - `KungFuChess` — the game executable. Everything under `src/` except `src/tests/`.
-  - `KungFuChess_tests` — doctest-based test executable. Everything under
-    `src/tests/` (except `src/tests/main.cpp`) plus all the same logic/UI sources
-    (`LIB_SOURCES`) minus `src/main.cpp`.
-- `src/tests/main.cpp` is a **third**, standalone entry point (a console REPL — see
-  below). As of this review it is not included in either CMake target's source list
-  (`GAME_SOURCES` excludes all of `src/tests/`, and `TEST_SOURCES` explicitly excludes
-  this file), so it currently isn't built by default. If you need the REPL, check
-  whether it's been wired into a target before assuming `cmake --build` produces it.
+- Root `CMakeLists.txt` no longer globs any sources directly — every target lives in
+  one of four `add_subdirectory()`s: `common/`, `protocol/`, `server/`, `client/`, each
+  with its own `CMakeLists.txt`. The old local, no-network `KungFuChess`/
+  `KungFuChess_tests` executables (which used to glob all of `src/`) are gone —
+  `src/` itself was deleted once the networked client/server path was proven working.
 - OpenCV is vendored under `lib/` (headers in `lib/include/opencv2`, prebuilt libs/DLLs
   in `lib/bin`), version 4.5.1. Debug links `opencv_world451d`, Release links
-  `opencv_world451`. DLLs are copied next to each executable post-build.
+  `opencv_world451`. The root `CMakeLists.txt` only *defines* `OPENCV_DIR`/
+  `OPENCV_INCLUDE_DIR`/`OPENCV_LIB_DIR`; only `client/`'s `KungFuChessClientUi` library
+  actually links OpenCV now (previously two executables did) — the DLL is copied next
+  to `KungFuChessGuiClient` post-build.
 - C++ standard: 17.
-- Root `CMakeLists.txt` also `FetchContent`s `ixwebsocket` (pinned `v12.0.1`, built with
+- Root `CMakeLists.txt` `FetchContent`s `ixwebsocket` (pinned `v12.0.1`, built with
   `USE_TLS`/`USE_ZLIB` off — plain `ws://` only, no compression) and `nlohmann_json`
-  (pinned `v3.12.0`, header-only) **once, at the root**, before `add_subdirectory(protocol)`,
-  `add_subdirectory(server)`, `add_subdirectory(client)` — both `server/` and `client/`
-  link against these, and `FetchContent_MakeAvailable` for the same package from two
-  different subdirectories would redefine its targets. `server/CMakeLists.txt` still
-  separately `FetchContent`s `SQLiteCpp` (pinned `3.3.1`) itself, since only `server/`
-  needs it. Building `KungFuChess`/`KungFuChess_tests` does not require network access
-  the way building `protocol`/`server`/`client`'s targets does (first configure fetches
-  `SQLiteCpp`, `ixwebsocket`, and `nlohmann_json` from GitHub).
+  (pinned `v3.12.0`, header-only) **once, at the root**, before any `add_subdirectory`,
+  since `FetchContent_MakeAvailable` for the same package from two different
+  subdirectories would redefine its targets. `server/CMakeLists.txt` separately
+  `FetchContent`s `SQLiteCpp` (pinned `3.3.1`) itself, since only `server/` needs it.
+- Target graph, by directory (`->` means "links"):
+  - `common/`: `KungFuChessCommon` (STATIC — DTOs/enums/EventBus/Config have real
+    `.cpp` files, not just headers) `-> nlohmann_json`.
+  - `protocol/`: `KungFuChessProtocol` (INTERFACE) `-> nlohmann_json, KungFuChessCommon`
+    (its `Message.h` wraps `common::GameView` directly); `KungFuChessProtocol_tests`
+    (doctest, message round-trip serialization) `-> KungFuChessProtocol` only —
+    deliberately not `KungFuChessGame`, see "DTO layer" below for why that separation
+    matters and how it's kept true.
+  - `server/`: `KungFuChessPersistence` (STATIC, SQLite) `-> SQLiteCpp` ->
+    `KungFuChessAuth` (STATIC, `services/AuthService.cpp` only) `-> KungFuChessPersistence`;
+    `KungFuChessGame` (STATIC, all of `src/game/` — model/rules/Engine/Controller/IO)
+    `-> KungFuChessCommon`; `KungFuChessGameSession` (STATIC,
+    `services/GameSession.cpp`+`GameSessionManager.cpp` — kept separate from
+    `KungFuChessAuth` on purpose, see below) `-> KungFuChessGame, KungFuChessProtocol`;
+    `KungFuChessNetwork` (STATIC, `handlers/`+`network/`)
+    `-> KungFuChessAuth, KungFuChessGameSession, KungFuChessProtocol, ixwebsocket`;
+    `KungFuChessServer` executable `-> KungFuChessNetwork`;
+    `KungFuChessPersistence_tests` (doctest; persistence + auth + game + game-session +
+    common tests, all in one binary) `-> KungFuChessPersistence, KungFuChessAuth,
+    KungFuChessGame, KungFuChessGameSession, KungFuChessNetwork`.
+  - `client/`: `KungFuChessClientNetwork` (STATIC, `network/WebSocketClient`)
+    `-> KungFuChessProtocol, ixwebsocket`; `KungFuChessCliClient` executable (the
+    text-based auth-only CLI) `-> KungFuChessClientNetwork, KungFuChessCommon`;
+    `KungFuChessClientGame` (STATIC, `game/BoardMapper.cpp`+`GameClient.cpp`)
+    `-> KungFuChessClientNetwork, KungFuChessCommon`; `KungFuChessClientUi` (STATIC,
+    `ui/` — moved from `src/UI/`) `-> KungFuChessClientGame, KungFuChessCommon, OpenCV`;
+    `KungFuChessGuiClient` executable (`src/gui_main.cpp` — the actual playable
+    networked game) `-> KungFuChessClientUi, KungFuChessClientGame,
+    KungFuChessClientNetwork, KungFuChessCommon`; `KungFuChessClient_tests` (doctest;
+    `BoardMapper` + basic `GameClient` construction/default-state coverage)
+    `-> KungFuChessClientGame`.
 
 ## Module map and dependency direction
 
 ```
-common/enums        <-- no dependencies (PieceColor, PieceType, PieceState, MoveValidationReason)
-common/PixelPosition <-- no dependencies ({int x, y} value type, shared by UI and logic/Controller)
-common/EventBus/EventBus.h <-- no dependencies (generic pub/sub, templated on caller's event type)
+common/                <-- no dependency on server/ or client/
+  enums/                   PieceColor, PieceType, PieceState, RestKind, MoveValidationReason
+  Config/                  BoardConfig (CELL_SIZE), TimingConfig (move/rest/tick durations),
+                           NetworkConfig (host/port) -- plain constexpr, single source of
+                           truth for values previously hardcoded/duplicated per file
+  PixelPosition.h          {int x, y}, shared by client UI and server Controller history
+  EventBus/                EventBus.h (generic pub/sub) + Events.h (chess event payloads)
+  DTO/                     BoardView/PieceView/PositionView/MotionView/JumpView/RestView/
+                           GameView -- each with a toJson()/fromJson() pair; each type's
+                           converting-from-domain-object constructor (e.g.
+                           PositionView(const Position&)) lives in its own *FromDomain.cpp
+                           translation unit, deliberately separate from that type's other
+                           methods (see "DTO layer" below for why)
         ^
-common/DTO           -- View/DTO objects for rendering; depends on logic/model
-common/EventBus/Events.h -- event payload structs; depends on logic/model, same layering as common/DTO
+protocol/               <-- depends on common/ (wraps common::GameView directly)
+  MessageType.h            wire "type" string constants
+  Message.h                one struct per message, each with in-struct toJson()/fromJson()
         ^
-logic/model          -- core domain classes; depends only on common/enums
+server/src/game/*       <-- the authoritative domain simulation, depends only on common/
+  model, rules, Engine, Controller, IO   (moved verbatim from src/logic/*, see below)
         ^
-logic/rules           -- per-piece legality; depends on logic/model + common/DTO/MoveValidation.h
+server: GameSession, GameSessionManager, GameRequestHandler   <-- depends on game/ + protocol/
         ^
-logic/Engine          -- GameEngine; depends on logic/model, logic/rules, logic/Controller/RealTimeArbiter,
-                          common/EventBus (EventBus.h + Events.h)
+server/src/network (WebSocketServer)   <-- request/response transport, unaware of game/ at all
+
+client/src/ui/*         <-- depends only on common/DTO + common/enums + common/PixelPosition
+  Img, BoardCanvas, SpriteManager, AnimationFrame, Renderer, GameLoop
+        ^ (GameLoop is the one exception: it also holds a GameClient&)
+client/src/game/*       <-- BoardMapper (pixel math) + GameClient (network-backed
+                            Controller& replacement), depends on common/ + protocol/
         ^
-logic/Controller      -- Controller, RealTimeArbiter, BoardMapper; depends on logic/Engine, logic/model,
-                          common/PixelPosition (input) and common/DTO/BoardView (output snapshot)
-        ^
-logic/IO              -- BoardParser, BoardPrinter, CommandProcessor, GameFactory; depends on all of the above
-        ^
-UI/                   -- OpenCV rendering + the live loop; depends on common/DTO + common/enums +
-                          common/PixelPosition, and — only via UI/GameLoop, only on
-                          logic/Controller/Controller — never directly on logic/Engine/model/rules
+client/src/network (WebSocketClient)   <-- request/response transport, unaware of game/ at all
 ```
 
-Note: `logic/Controller` depending on `common/DTO/BoardView` (for `Controller::getBoardView()`) and
-`common/PixelPosition` (for `Controller::handlePixelClick()`) does not create a cycle — `common/*`
-still depends only downward on `logic/model`. `PixelPosition` lives in `common/` rather than `UI/`
-specifically so both `UI/` and `logic/Controller` can depend on it without either depending on the other.
+`common/` is the *only* thing `server/` and `client/` share as compiled code — and even
+then, only the DTO/enum/EventBus/Config layer, never a live game object. The two
+processes talk **exclusively** over serialized JSON (`protocol/`); there is no shared
+`Controller&`/`GameEngine&` reference anywhere in this codebase anymore, unlike before
+the client/server split when one `main.cpp` held all of it in one address space.
 
-`UI/GameLoop` is the one deliberate exception to "UI never depends on logic/*": it holds a
-`Controller&` and calls `handlePixelClick`/`getBoardView`/`isGameOver`/`wait` on it — exactly the
-sanctioned UI↔Controller boundary, and nothing else in `UI/` reaches any further into `logic/*`.
-`GameFactory` (in `logic/IO`, not `logic/Engine`) is what `main.cpp` calls to get a fully-populated
-`GameEngine` to hand to `Controller`; `GameEngine` itself does not depend on `logic/IO`.
+`server/src/game/Controller` no longer has any pixel-facing methods or a `BoardMapper`
+member — pixel↔cell translation is purely a client-side rendering concern now (see
+`client/src/game/BoardMapper`, whose `pixelToCell` returns a `PositionView`, not a
+domain `Position`, precisely so the client never needs to link the server's domain
+model at all). `Controller::click(Position)` (click-to-select, still used by the REPL/
+tests) and the newer `Controller::move(Position, Position)` (a direct, unconditional
+from/to command, added for the network's fully-resolved `MoveRequest`) are two
+independent entry points into the same engine — see "Controller & command flow" below
+for why both exist.
 
-Important nuance: `common/DTO` is meant to decouple the UI from the logic model, but
-its converting constructors (`BoardView(const Board&)`, `PieceView(const Piece&)`,
-`PositionView(const Position&)`) directly `#include` the `logic/model` headers. So the
-decoupling is only "UI never includes logic/model", not "DTO is independent of
-logic/model" — the two are still transitively coupled.
-
-`logic/*` never includes anything from `UI/`. Good — the intended layering (logic
-independent of rendering) does hold in that direction.
-
-## Core domain model (`src/logic/model/`)
+## Core domain model (`server/src/game/model/`)
 
 - **`Position`** — `{int row, col}` value type. Has `operator<` so it can go in
   `std::set<Position>` (used by rule legality sets).
@@ -148,13 +158,9 @@ independent of rendering) does hold in that direction.
   Unlike `Motion`/`Jump`, it's keyed by **piece id**, not `Position` (a piece stays put
   while resting, so identity — not square — is what a `requestMove`/`requestJump`
   guard needs to check), and it has no `active` flag: it lives in `RealTimeArbiter`'s
-  `std::map<int, Rest>`, where map presence is itself the "active" signal. Lives in
-  `RealTimeArbiter`, not `Board` — same ownership split as `Motion`/`Jump`. `RestKind`
+  `std::map<int, Rest>`, where map presence is itself the "active" signal. `RestKind`
   (`common/enums/RestKind.h`, `Long`/`Short`) is what lets a single `Rest` per piece
-  represent either a post-*move* cooldown or a post-*jump* cooldown — a piece can only
-  ever be resting one way at a time (both `requestMove`/`requestJump` reject outright
-  while any rest is active), so one map entry with a kind tag is enough; there's no
-  need to track both kinds simultaneously per piece.
+  represent either a post-*move* cooldown or a post-*jump* cooldown.
 - **`Piece`** — `{int id; PieceType type; PieceColor color; PieceState state;
   Position position;}`. `operator==`/`!=` compare **only by id**. `state` exists and
   is settable (`setState`), but no production code ever calls `setState` — see Gaps.
@@ -170,7 +176,7 @@ Ownership: `GameState` owns `Board` by value → `Board` owns `Piece`s by value 
 vector → `Piece` owns `Position` by value. `Motion`/`Jump` are transient value objects
 held only by `RealTimeArbiter`, not by `Piece`.
 
-## Rules system (`src/logic/rules/`)
+## Rules system (`server/src/game/rules/`)
 
 `IMovementRule` — single-method interface:
 ```cpp
@@ -195,625 +201,448 @@ dispatch to the right rule → membership in `legalDestinations()`, returning a
 
 `PieceState` (`common/enums/PieceState.h`) has 6 values: `Idle, Moving, Captured,
 Jump, LongRest, ShortRest`. This still does **not** fully match the on-disk sprite
-state folders (`idle/move/jump/short_rest/long_rest` — see UI section: `Captured` maps
-to `"captured"`, which has **no on-disk folder at all** — deliberately unimplemented,
-see Gaps; `Idle`/`Moving`/`Jump`/`LongRest`/`ShortRest` all map correctly to
-`"idle"`/`"move"`/`"jump"`/`"long_rest"`/`"short_rest"`), and no production code calls
-`Piece::setState` at all — `Piece.state` itself is still never mutated. The
-`Jump`/`LongRest`/`ShortRest` sprite states *are* now driven in the live render loop,
-but — same as `Motion` before them — via `UI/AnimationFrame` reading `GameView`'s
-`JumpView`/`RestView`s directly, not via `Piece.state`.
+state folders (`idle/move/jump/short_rest/long_rest`; `Captured` maps to `"captured"`,
+which has **no on-disk folder at all** — deliberately unimplemented, see Gaps).
 
-`RealTimeArbiter` (`logic/Controller/RealTimeArbiter`) is a scheduler with a manually
-advanced logical clock (`long long currentTime`, moved forward only by explicit
-`advanceTime(ms)` calls — **no threads, no wall-clock, no real tick loop anywhere in
-the codebase**). Important simplification: it tracks only **one global `Motion` and
-one global `Jump`** for the entire board — not per-piece. Only one piece on the whole
-board can be moving (or jumping) at a time; a second `requestMove`/`requestJump` while
-one is active is rejected with `MoveAlreadyInProgress`. This is a significant MVP-level
-simplification versus the classic Kung Fu Chess variant, where every piece has an
-independent cooldown.
+`RealTimeArbiter` (`server/src/game/Controller/RealTimeArbiter`) is a scheduler with a
+manually advanced logical clock (`long long currentTime`, moved forward only by
+explicit `advanceTime(ms)` calls — **no threads, no wall-clock inside this class
+itself**; see "Server-owned tick loop" below for what *does* call `advanceTime` on a
+real interval now). Important simplification: it tracks only **one global `Motion` and
+one global `Jump`** for the entire board — not per-piece; a second
+`requestMove`/`requestJump` while one is active is rejected with
+`MoveAlreadyInProgress`. `Rest`, however, *is* per-piece (keyed by piece id) — multiple
+pieces can be resting simultaneously; only the `Motion`/`Jump` themselves remain
+single-global.
 
-`GameEngine` (`logic/Engine/GameEngine`) drives the simulation. Its constructor now
-also takes an `EventBus&` (stored as a reference member — safe because `GameEngine` is
-already never actually copied, only ever constructed once via `GameFactory`'s
-guaranteed-elided prvalue return; see "Event bus" below), which it publishes to at the
-points noted below:
-- `MILLIS_PER_SQUARE = 1000` — a move's duration is `pathLength * 1000ms`, where
-  `pathLength` depends on piece type (King/Knight = 1; Pawn/Bishop = row distance;
-  Rook = Manhattan distance; Queen = Manhattan if straight else row distance).
-- `REST_DURATION_MILLIS = 2000` — after a piece finishes a move (see
-  `settleCompletedMotions` below), that specific piece is put into a `RestKind::Long`
-  `Rest` for this long. `JUMP_REST_DURATION_MILLIS = 1000` — after a piece's `Jump`
-  ends, for *either* reason (natural timeout in `settleCompletedJumps`, or being
-  consumed early by a successful ambush-capture inside `executeMove`), that piece is
-  put into a `RestKind::Short` `Rest` for this long instead. Either kind of active
-  rest makes `requestMove`/`requestJump` reject that piece specifically with
-  `MoveValidationReason::PieceResting` (checked *after* the existing global
-  `MoveAlreadyInProgress`/rule-validation/existence gates, right before the
-  state-mutating call — same "global gates first, piece-specific gates last"
-  ordering in both methods). This is a **per-piece** lock layered on top of the
-  still-unchanged single-global-`Motion`/`Jump` exclusivity below — it closes part
-  of gap #5 (per-piece rest specifically), not gap #5 as a whole; only one piece can
-  still be *traveling*/*jumping* at a time board-wide.
-- `requestMove(from, to)` — rejects if game over, a motion is already in progress, or
-  (once validation and the piece lookup both succeed) the piece is resting (either
-  kind); otherwise validates via `RuleEngine` and starts a `Motion` in the arbiter.
-  **No board mutation happens at request time.**
-- `requestJump(position)` — same guards (plus the same resting check, ordered after
-  `hasActiveJump()`), starts a `Jump` of duration `MILLIS_PER_SQUARE` at the piece's
-  own square. Doesn't move the piece; models a temporary ambush/counter window.
-- `executeMove(motion)` — runs when a motion *completes* (not when requested):
-  - Special case: if a `Jump` is active at the motion's destination and the mover is
-    the opposite color of the jumping piece, the **mover gets captured** (removed), the
-    jump is consumed, and the defending (jumping) piece is put into a
-    `RestKind::Short` rest (`arbiter.startRest(jumpingPieceId, JUMP_REST_DURATION_MILLIS,
-    RestKind::Short)`, called with the id captured *before* `getBoard().removePiece`
-    runs, since removing the mover can shift `Board`'s internal vector and invalidate
-    pointers into it) — the move itself doesn't happen. This is how "jump" acts as an
-    ambush/counter mechanic, and successfully ambushing now costs the defender a brief
-    rest just like completing an ordinary move or jump does. The captured mover's
-    id/color/type/position are also captured before removal and published as a
-    `PieceCapturedEvent` (see "Event bus" below) right after the removal.
-  - Otherwise: capture whatever occupies the destination (game-over if it was a King),
-    `board.movePiece(from, to)`, then check pawn promotion (reaching the far row →
-    `setType(Queen)`). This branch still isn't aware of post-*move* `Rest` scheduling
-    (that's `settleCompletedMotions`' job, not this pure board-mutation function). If a
-    piece occupied the destination, its id/color/type/position are captured before
-    `removePiece` and published as a `PieceCapturedEvent`; if the removed piece was a
-    King, a `GameOverEvent` is published right after `gameState.setGameOver(true)`.
-- `advanceTime(ms)` — advances the arbiter's clock, then settles any motion/jump whose
-  `endTime` has passed (`settleCompletedMotions` calls `executeMove` + `finishMotion`
-  then starts a `RestKind::Long` rest as described below — and, only when the mover is
-  confirmed still alive and standing at `motion.getTo()` (see the ambush-vs-defender
-  note just below), publishes a `MoveExecutedEvent{pieceId, from, to}` right alongside
-  that `startRest` call; `settleCompletedJumps`
-  resolves the piece id at the jump's position **before** calling `finishJump()`, then
-  starts a `RestKind::Short` rest for it — this is the natural-timeout counterpart to
-  the ambush-capture case above; between the two, every way a `Jump` can end now
-  results in a short rest for the piece that was jumping), then `settleCompletedRests()`
-  (purges any `Rest` whose `endTime` has passed). `settleCompletedMotions` captures the
-  mover's id from `motion.getFrom()` **before** calling `executeMove`, then re-looks it
-  up by id (`Board::getPieceById`) *afterward* and only starts a `Rest` for it if it's
-  still alive **and** now sitting at `motion.getTo()`. This matters: in the
-  ambush-capture special case above, the *mover* is removed but the *defending* piece
-  is left standing at that square — naively checking "is there a piece at
-  `motion.getTo()`?" after `executeMove` would find the defender and incorrectly put
-  *it* to rest a second time (with the wrong kind/duration) for successfully
-  defending. Keying the lookup by the mover's id specifically avoids that.
+`GameEngine` (`server/src/game/Engine/GameEngine`) drives the simulation. Its
+constructor takes an `EventBus&` (stored as a reference member — safe because
+`GameEngine` is never actually copied, only ever constructed once via
+`GameFactory`'s guaranteed-elided prvalue return), which it publishes to at the points
+noted below:
+- `MILLIS_PER_SQUARE`, `REST_DURATION_MILLIS`, `JUMP_REST_DURATION_MILLIS` —
+  `static constexpr` members that now delegate to `common/Config/TimingConfig.h`
+  (single source of truth; these were three independently-set constants before).
+- `requestMove(from, to)` / `requestJump(position)` — no board mutation at request
+  time; validates and starts a `Motion`/`Jump` in the arbiter.
+- `executeMove(motion)` — runs when a motion *completes*: the ambush-capture special
+  case (an active enemy `Jump` at the destination captures the mover instead), or an
+  ordinary capture-then-move-then-promotion-check. Publishes `PieceCapturedEvent`/
+  `GameOverEvent` as appropriate.
+- `advanceTime(ms)` — advances the arbiter's clock, settles completed motions/jumps
+  (publishing `MoveExecutedEvent` and starting the matching `Rest`), then purges
+  expired rests.
 
-There is currently no code path that calls `advanceTime` on a real clock/timer — time
-only moves forward when a caller (the REPL's `wait <ms>` command, or a test) asks it
-to.
+## Event bus (`common/EventBus/`)
 
-## Event bus (`src/common/EventBus/`)
-
-Two files, split so the mechanism stays fully generic and reusable while the
-chess-specific payloads stay next to the domain they describe:
-
-- **`EventBus.h`** — a generic, header-only, type-safe publish/subscribe bus. Zero
-  dependency on `logic/model` or anything chess-specific, so it sits at the same
-  dependency-free layer as `common/enums`/`common/PixelPosition` in the module map, and
-  could be reused for any future event type without modification. Routing is keyed by
-  the C++ type of the event struct itself (`std::type_index(typeid(Event))`), not a
-  hand-maintained enum: `template<typename Event> subscribe(std::function<void(const
-  Event&)>)` returns an opaque `SubscriptionId` (a `std::atomic<std::size_t>` counter
-  shared across all event types), `unsubscribe<Event>(id)` removes it, and
-  `publish<Event>(const Event&)` invokes every subscriber currently registered for that
-  exact type. Internally, one `std::unordered_map<std::type_index,
-  std::unique_ptr<ISubscriberList>>` holds a type-erased list per event type (a tiny
-  polymorphic `ISubscriberList` base plus a templated `SubscriberList<Event>`
-  concrete type). **Thread safety**: a single `std::mutex` guards the map (same plain-
-  mutex style as `server/src/services/AuthService`, not a `shared_mutex`);
-  `subscribe`/`unsubscribe` lock briefly to mutate the map, and `publish` locks only
-  long enough to copy out the matching handler vector, then invokes the copied handlers
-  *after* releasing the lock. **Dispatch is synchronous and immediate** — `publish()`
-  calls matching handlers right away, on the calling thread, deliberately not a
-  queued/pumped model — copying the handler list before unlocking is what lets a
-  handler safely subscribe/unsubscribe/publish again from inside its own callback
-  without deadlocking. There is no singleton: like `Controller` holding a `GameEngine&`
-  or `GameLoop` holding a `Controller&`/`Renderer&`/`BoardCanvas&`, exactly one
-  `EventBus` is constructed by `main.cpp` and passed by reference to whatever needs to
-  publish or subscribe.
-- **`Events.h`** — the concrete event payload structs, one per roadmap feature target,
-  reusing an event across features that react to the same moment rather than inventing
-  redundant types: `GameStartedEvent` (game-start animations), `MoveExecutedEvent{int
-  pieceId; Position from, to}` (move logs, movement sound), `PieceCapturedEvent{int
-  pieceId; PieceColor color; PieceType type; Position position}` (capture sound, score
-  updates), `GameOverEvent` (final score update, end-of-game animation). This file
-  depends on `logic/model` (`Position`) and `common/enums` (`PieceColor`, `PieceType`)
-  — the same layering `common/DTO` already uses for the same reason (converting/
-  describing logic-layer state for a consumer outside `logic/`).
-
-`GameEngine` is currently the only publisher (see the `executeMove`/
-`settleCompletedMotions` call sites noted in "Real-time mechanics" above), and
-`main.cpp` publishes the one `GameStartedEvent` right after constructing the engine.
-**Nothing subscribes yet** — no `ScoreService`, move-log writer, sound player, or
-animation trigger exists in the codebase; this bus only makes sure the events those
-future features will need are already firing, so they can be added later as pure
-subscribers without touching `GameEngine` again. `server/`/`client/` do not use this
-bus and have no access to it — they are separate, currently-unlinked binaries from the
-`src/` build (see "Server / persistence / networking layer" below), so "score
-persistence" for now means "publish an event a future subscriber can act on," not an
-actual database write.
+Unchanged mechanism from before the client/server split — a generic, header-only,
+type-safe publish/subscribe bus (`EventBus.h`, zero dependency on anything chess-
+specific) plus the chess-specific payload structs (`Events.h`: `GameStartedEvent`,
+`MoveExecutedEvent{pieceId, from, to}`, `PieceCapturedEvent{pieceId, color, type,
+position}`, `GameOverEvent`). **What changed**: this bus finally has a real subscriber.
+`server/src/services/GameSession` constructs its own `EventBus`, passes it into its own
+`GameEngine`, and subscribes a handler for all four event types (see "Server /
+persistence / networking layer" below) — this is the seam where "a game state change
+just happened" becomes "tell the network layer to broadcast something," with `EventBus`
+as the single source of "what changed," so there's no separate diffing/polling logic
+anywhere else.
 
 ## Controller & command flow
 
-`Controller` (`logic/Controller/Controller`) implements click-to-select/click-to-move
-and is the sole mediator between UI and logic — the UI never touches `GameEngine`
-directly. It holds `GameEngine&`, a `BoardMapper` (by value), `hasSelection`,
-`selectedPosition`.
+`Controller` (`server/src/game/Controller/Controller`) is the sole mediator between a
+game-hosting owner (today: `GameSession`) and `GameEngine` — nothing outside `server/`
+ever touches `GameEngine` directly. It holds `GameEngine&`, `hasSelection`,
+`selectedPosition`. No `BoardMapper`, no pixel-facing methods at all (both moved to
+`client/` — see Module map above).
 
 - `click(Position)`: selects a same-color piece on first click (ignores clicks on
   empty squares), re-selects if a second same-color piece is clicked, otherwise calls
-  `requestMove` and clears selection regardless of validation outcome. Still public
-  and used directly by the REPL (`CommandProcessor`) and unit tests, which already
-  work in logical-position space.
-- `handlePixelClick(const PixelPosition&)` — the UI-facing entry point for
-  selecting/moving. Translates via `boardMapper.pixelToCell(...)` into a `Position`,
-  then delegates to `click(Position)`.
-- `handlePixelJump(const PixelPosition&)` — the UI-facing entry point for jumping,
-  mirroring `handlePixelClick`: translates the pixel via the same `boardMapper`,
-  then delegates to `jump(Position)`. Wired to right-click in `UI/GameLoop` (see
-  below) — before this existed, nothing in the graphical game could ever trigger a
-  jump at all.
-- `jump(Position)` → `requestJump`. `wait(ms)` → `advanceTime`. `printBoard(ostream&)`
-  → `BoardPrinter::print`.
-- `getGameView() const` → builds and returns a `GameView`, the single per-frame
-  snapshot the UI polls (**replaces** the old `getBoardView()`/`BoardView`-only
-  method). Assembles: `BoardView(gameEngine.getGameState().getBoard())`; a
-  `MotionView`/`JumpView` (default-constructed/inactive if `GameEngine` reports no
-  active motion/jump); a `std::vector<RestView>` built by mapping
-  `gameEngine.getActiveRests()` through `Board::getPieceById` to resolve each
-  resting piece's current position (skipping any whose piece id no longer exists —
-  e.g. captured mid-rest); and the controller's own `hasSelection`/
-  `selectedPosition`. `GameView` is a new sibling DTO alongside `BoardView`, not an
-  extension of it — `Motion`/`Jump`/`Rest` live in `RealTimeArbiter`, not `Board`,
-  and selection is Controller-owned UI state with no `Board`/`GameState`
-  representation at all, so neither can be folded into `BoardView(const Board&)`'s
-  single-source conversion. (This supersedes an earlier note in this file that
-  anticipated `getBoardView()` itself absorbing in-motion data — the real shape
-  needed more than `Board` alone could express.)
-- `isGameOver() const` → forwards to `gameEngine.getGameState().isGameOver()`. Lets
-  `UI/GameLoop` decide when to stop the render loop without reaching past `Controller`
-  into `GameEngine` directly.
+  `requestMove` and clears selection regardless of validation outcome. Still used
+  directly by the REPL (`CommandProcessor`) and unit tests, which already work in
+  logical-position space. **Not used by the network path** — `GameSession` never
+  calls `click()`, only `move()`.
+- `move(Position from, Position to)` — a **direct**, unconditional from/to command:
+  `gameEngine.requestMove(from, to)`, bypassing `click()`'s selection state machine
+  entirely. Added specifically because a networked `MoveRequest` already names both
+  squares explicitly; routing it through `click()`'s selection state would risk
+  misfiring against whatever this `Controller`'s selection happened to be at the time.
+  This means **`Controller`'s own `hasSelection`/`selectedPosition` are never set by
+  the network path at all** — the client-visible "selection highlight" is now a purely
+  client-side concept (see `client/src/game/GameClient` below).
+- `jump(Position)` → `requestJump`. `wait(ms)` → `advanceTime` — called by
+  `GameSessionManager::tickAll`, not by any client request (see below).
+  `printBoard(ostream&)` → `BoardPrinter::print`.
+- `getGameView() const` → builds and returns a `GameView` snapshot exactly as before
+  the split (board/motion/jump/rests/selection/currentTime) — this is what
+  `GameSession` serializes into a `protocol::GameViewMessage` to send to a client.
+- `isGameOver() const` → forwards to `gameEngine.getGameState().isGameOver()`.
 
-`BoardMapper` (`logic/Controller/BoardMapper`) — `pixelToCell(int x, int y)` and an
-overload `pixelToCell(const PixelPosition&)`, both dividing by a hardcoded
-`CELL_SIZE = 100`. This constant is still **independently duplicated** in
-`UI/CoordinateConverter::CELL_SIZE` and again as a constructor parameter in
-`BoardCanvas` — three places, one source of truth would be safer (not yet fixed).
+`PixelPosition` (`common/PixelPosition`) — a plain `{int x, y}` value type, still in
+`common/` so it can theoretically be shared, though in practice only `client/` uses it
+now (`BoardMapper` and `GameLoop`'s mouse-event handling).
 
-`PixelPosition` (`common/PixelPosition`) — a plain `{int x, y}` value type. It lives in
-`common/`, not `UI/`, specifically so `Controller::handlePixelClick` can accept it
-without `logic/Controller` depending on `UI/`.
+## DTO layer (`common/DTO/`)
 
-Full intended flow:
-- **Input**: UI captures a mouse click as a `PixelPosition` → `Controller::handlePixelClick`
-  → `BoardMapper::pixelToCell` → `Controller::click` (select, then target) →
-  `GameEngine::requestMove` → `RuleEngine::validateMove` → on success,
-  `RealTimeArbiter::startMotion` → later, an explicit `advanceTime` tick →
-  `GameEngine::executeMove` mutates `Board`/`GameState`.
-- **Rendering**: UI calls `Controller::getBoardView()` every frame → `BoardView(const
-  Board&)` snapshot → UI renders whatever it gets, with no knowledge of whether the
-  board is static or (in future) mid-animation.
+`PositionView`, `PieceView`, `BoardView`, `MotionView`, `JumpView`, `RestView`,
+`GameView` mirror the domain model for rendering *and* for the wire — each now has a
+`toJson() const` (returning a `nlohmann::json`, composing child DTOs' own `toJson()`s
+rather than duplicating field lists) and a `static X fromJson(const nlohmann::json&)`.
+Enum wire values (`PieceColor`/`PieceType`/`PieceState`/`RestKind`) are registered once
+via `NLOHMANN_JSON_SERIALIZE_ENUM` in `common/enums/EnumJson.h` — one canonical string
+per enum value, not re-invented per call site.
 
-## DTO layer (`src/common/DTO/`)
+`MotionView`/`JumpView` gained a second, all-fields constructor (mirroring `RestView`'s,
+which already had one) alongside their original converting-from-domain constructor —
+needed so a side with no domain `Motion`/`Jump` object (the client) can still
+reconstruct one purely from JSON via `fromJson`.
 
-`PositionView`, `PieceView`, `BoardView` mirror `Position`/`Piece`/`Board` for
-rendering, each with a converting constructor from the logic-layer type.
-`MoveValidation` (header-only) is `{bool isValid; MoveValidationReason reason;}`.
+**Important structural detail, easy to break by accident**: each DTO's
+converting-from-domain constructor (`PositionView(const Position&)`,
+`PieceView(const Piece&)`, `BoardView(const Board&)`, `MotionView(const Motion&)`,
+`JumpView(const Jump&)`) lives in its own dedicated `*FromDomain.cpp` file (e.g.
+`PositionViewFromDomain.cpp`), **separate** from that DTO's other constructors/
+`toJson()`/`fromJson()`/getters (which stay in the original `X.cpp`). This is not
+cosmetic: static libraries link at object-file granularity, so a consumer that never
+calls a converting-from-domain constructor (a future client always falls in this
+category — it only ever builds DTOs from `fromJson`) never causes the linker to pull
+that specific `.obj` out of `KungFuChessCommon.lib`, and therefore never needs
+`server/src/game/model`'s symbols linked in at all. `protocol/tests`
+(`KungFuChessProtocol_tests`) is proof this works today: it links only
+`KungFuChessProtocol` (→ `KungFuChessCommon`), never `KungFuChessGame`, and still
+builds — before this split, it needed `KungFuChessGame` linked in purely to satisfy
+symbol references inside converting constructors it never actually called. **If you
+ever merge a DTO's converting-from-domain constructor back into its main `.cpp` file,
+you will silently re-introduce this coupling** — any consumer that used to link fine
+without `KungFuChessGame` will fail at link time instead.
 
-`MotionView`/`JumpView` mirror `Motion`/`Jump` the same way (converting constructor,
-default constructor for the "inactive" case). `RestView` is the exception — since
-`Rest` only carries a piece id (no `Position`), `RestView` has **no** converting
-constructor from `Rest` alone; it's built manually by `Controller::getGameView()`
-after resolving the resting piece's current position via `Board::getPieceById`.
-All three add `getProgress(long long currentTime) const`, an elapsed-fraction
-`[0.0, 1.0]` computed via the shared free function `computeProgress` in
-`common/TimeProgress.h` (one clamp/divide implementation, reused three times,
-instead of copy-pasting it into each DTO).
+`common/DTO`'s *headers* still `#include` `server/src/game/model/*.h` directly (for
+the converting constructors' declarations) — so the decoupling described above is a
+link-time, object-file-granularity thing, not a compile-time/header-level one. A
+`client/`-side translation unit including, say, `PieceView.h` still transitively sees
+`server/src/game/model/Piece.h`'s declaration; it just never needs `Piece.cpp`'s
+compiled symbols linked in, because nothing in that translation unit ever constructs a
+`PieceView` from a real `Piece`.
 
-`GameView` is a new aggregate "one render frame's worth of data" DTO: `{BoardView
-board; MotionView motion; JumpView jump; std::vector<RestView> rests; bool
-hasSelection; PositionView selectedPosition; long long currentTime;}`, built
-entirely by `Controller::getGameView()` (see Controller section above for why this
-is a sibling of `BoardView` rather than an extension of it).
+## IO layer (`server/src/game/IO/`)
 
-`BoardView(const Board&)` now loops `row`/`col` and calls `board.getPiece(Position(row,
-col))` for each cell, producing a dense, row-major 64-slot vector — empty squares get a
-default `PieceView(PieceType::Empty, PieceColor::None, ...)` at that position — so it's
-consistent with `BoardView::getPiece(row, col)`'s `pieces[row*cols+col]` indexing.
-(Previously this constructor iterated `Board::getPieces()`, a sparse, insertion-ordered
-vector of only occupied squares, which produced wrong results when combined with
-`getPiece(row,col)` — fixed as part of wiring up what was then `Controller::getBoardView()`
-and is now folded into `Controller::getGameView()`'s `BoardView` field.)
+- `GameFactory::createNewGame(EventBus& eventBus)` — the production entry point,
+  called by `GameSession`'s constructor. Takes the caller's `EventBus` and forwards it
+  straight into the `GameEngine` it builds. Returns a fully-populated `GameEngine` as a
+  single prvalue (guaranteed C++17 copy elision — required, since `GameEngine`'s
+  `RuleEngine` member stores raw pointers to its own rule sub-objects).
+  `createClassicBoard()` (private) builds the standard starting position directly.
+- `BoardParser::parse(text)` / `BoardPrinter::print(board)` — REPL/testing
+  convenience, not used by production game setup.
+- `CommandProcessor::run()` — a stdin-driven REPL: reads board text, builds
+  `GameState`/`GameEngine`/`Controller`, then dispatches `click <row> <col>` (now takes
+  logical row/col directly, **not** pixels — its old `BoardMapper`-based pixel-to-cell
+  translation was removed along with `BoardMapper`'s move to `client/`, since pixel
+  math has no business in server-side code), `wait <ms>`, `print board`,
+  `jump <row> <col>`. **Its entry point no longer exists at all** — it used to be
+  `src/tests/main.cpp`, which was deleted along with the rest of `src/` once the
+  networked path was proven working, so `CommandProcessor` is now compiled (as part of
+  `KungFuChessGame`) but has no way to actually run outside of
+  `server/tests/game_tests/io/command_processor_test.cpp`'s stdin-injection test.
 
-## IO layer (`src/logic/IO/`)
+## UI / rendering layer (`client/src/ui/`)
 
-- `GameFactory::createNewGame(EventBus& eventBus)` — the production entry point for
-  starting a game. Takes the caller's `EventBus` and forwards it straight into the
-  `GameEngine` it builds (see "Event bus" below). Returns a fully-populated
-  `GameEngine` as a single prvalue (`return
-  GameEngine(GameState(createClassicBoard()), eventBus);`) — deliberately not through a
-  named local, so C++17's *guaranteed* copy elision applies. This matters because
-  `GameEngine`'s `RuleEngine` member stores raw pointers to its own rule sub-objects
-  (see Rules section above); an actual copy/move of a `GameEngine` would leave those
-  pointers referring to the wrong object's memory. `createClassicBoard()` (private)
-  builds the standard starting position by directly constructing and placing all 32
-  `Piece` objects on an 8x8 `Board` — no string parsing involved.
-- `BoardParser::parse(text)` — static, parses whitespace-separated `<color><TYPE>`
-  tokens (e.g. `wK`, `bQ`, `.` for empty) into a `Board`. Row width must be consistent
-  or it throws. Piece IDs come from a process-global static counter (not reset per
-  parse — fine for uniqueness, not reproducible across repeated parses in one run).
-  **Not used by `GameFactory`/the graphical executable** — text-based board setup is
-  kept as a REPL/testing convenience, deliberately separate from the production path,
-  and may be deprecated later.
-- `BoardPrinter::print(board)` — static, row-major space-separated `Piece::toString()`
-  output, inverse of the parser's format.
-- `CommandProcessor::run()` — a stdin-driven REPL: reads board text until a
-  `"Commands:"` line, parses it via `BoardParser`, builds `GameState`/`GameEngine`/
-  `Controller`, then dispatches commands: `click x y`, `wait <ms>`, `print board`,
-  `jump x y`. Still useful for exercising the logic stack from the console without
-  OpenCV, but no longer the only place that runs the full stack end-to-end now that
-  `UI/GameLoop` exists. Its entry point (`src/tests/main.cpp`) is presently not
-  attached to a CMake target (see Build system).
+Unchanged from before the split in every respect **except what `GameLoop` talks to**
+(see below) — `Img`, `BoardCanvas`, `SpriteManager`, `AnimationFrame`, `Renderer` all
+still depend only on `common/DTO`/`common/enums`/`common/PixelPosition`, exactly as
+before, and none of them know a network is involved. `CoordinateConverter` is still
+unused (`Renderer`/`BoardCanvas` do their own inline pixel math). `BoardCanvas`'s
+constructor `cellSize` argument, `SpriteManager`'s `spriteSize` argument, and
+`BoardMapper`/`CoordinateConverter`'s `CELL_SIZE` all now derive from the single
+`common/Config/BoardConfig::CELL_SIZE` — previously three independently-hardcoded
+`100`s, now one source of truth (see Gaps history).
 
-Two on-disk data formats exist but are **not read by any current C++ code**:
-- `assets/pieces1/board.csv` — 8x8 CSV, `<TYPE><COLOR>` per cell (reverse order from
-  `BoardParser`'s `<color><TYPE>` text format).
-- `assets/pieces*/*/states/*/config.json` — `{"physics": {"speed_m_per_sec", "next_state_when_finished"}, "graphics": {"frames_per_sec", "is_loop"}}`. Looks like planned
-  animation/state-machine metadata for the cooldown-state rendering that doesn't exist
-  yet (no JSON library is even linked in `CMakeLists.txt`).
+- `GameLoop` — the live loop and the only place in `client/` that touches input
+  directly. Constructed with `GameClient&` (not `Controller&` anymore), `Renderer&`,
+  `BoardCanvas&`. `run()`: registers the mouse callback once, then loops:
+  `renderer.render(gameClient.getGameView())` → `renderer.renderGameOver()` if
+  `gameClient.isGameOver()` → `cv::waitKey(1)` → stops on ESC. **No longer measures a
+  wall-clock delta or calls anything like `wait(deltaMs)`** — the authoritative clock
+  now advances on the server's own tick loop (see below), completely independent of
+  whether this render loop is even running. Mouse handlers call
+  `gameClient.handlePixelClick`/`handlePixelJump` — same method names as the old
+  `Controller` calls, just resolving to network requests now.
 
-## UI / rendering layer (`src/UI/`)
+## `client/src/game/` — `BoardMapper` and `GameClient`
 
-- `Img` — RAII `cv::Mat` wrapper. `read()` loads via `cv::imread(..., IMREAD_UNCHANGED)`
-  (preserves alpha). `draw_on()` alpha-blends a 4-channel image onto another at (x,y).
-  `draw_rectangle(x, y, w, h, color, thickness)` wraps `cv::rectangle` — a **direct,
-  opaque** write (same category as `put_text`, unlike `draw_on`'s alpha-blend
-  compositing); pass `thickness = cv::FILLED` for a filled rectangle. Used by
-  `BoardCanvas` for selection/jump highlights (outlined) and the rest-countdown bar
-  (filled) — one primitive, three callers, all rendering as **solid colors**, not
-  translucent overlays (a `cv::rectangle` limitation, accepted as an MVP
-  simplification). `show()` is a pure drawing call — `cv::imshow(windowName(), img)`
-  only, no `cv::waitKey` and no return value. Pumping the window's event queue /
-  reading a keypress is deliberately **not** this class's job (see `GameLoop` below) —
-  `Img`/`BoardCanvas`/`Renderer` only ever produce pixels, never interpret input.
-  `windowName()` is a shared static constant (`"KungFuChess"`) so other code (namely
-  `GameLoop`, for `cv::setMouseCallback`) can address the same window `show()` draws to.
-- `PixelPosition` — moved to `common/PixelPosition` (see module map) — `{int x, y}`,
-  pixel-space analog of `Position`.
-- `CoordinateConverter` — cell→pixel via a duplicated `CELL_SIZE = 100`. **Currently
-  unused** — `Renderer`/`BoardCanvas` do their own inline pixel math instead.
-- `BoardCanvas` — holds a pristine `background` `Img` (loaded once from the board
-  image) plus a `frame` `Img` (the actual draw buffer) and `cellSize`. `beginFrame()`
-  resets `frame = background` — this exists because `drawPiece`/`drawPieceAtPixel`
-  permanently blend piece sprites into whatever image they're given; without
-  resetting to a clean background before each frame, pieces would leave visible
-  trails as they move across repeated `render()` calls in the live loop.
-  `drawPiece(Img&, row, col)` now just delegates to `drawPieceAtPixel(Img&, const
-  PixelPosition&)` (added so a moving piece can be drawn at an arbitrary
-  interpolated pixel, not just a cell). `getCellPosition(row, col)` is yet another
-  independent cell→pixel calculation. `getInterpolatedPosition(from, to, progress)`
-  linearly interpolates between two cells' pixel positions — this is what makes the
-  traveling-piece animation possible. `drawSelectionHighlight(row, col)` and
-  `drawJumpHighlight(row, col)` both go through a private `drawCellOutline(row, col,
-  color, thickness)` helper (different named `static const cv::Scalar`/`static
-  constexpr int` colors/thicknesses so the two are visually distinct).
-  `drawRestProgress(row, col, progress, kind)` draws a filled bar along the cell's
-  bottom edge whose width **shrinks** as the rest counts down (`cellSize * (1 -
-  progress)`) — `getProgress()`'s elapsed-fraction convention is inverted to a
-  remaining-time convention here, in `BoardCanvas`, not baked into `RestView`, since
-  `MotionView`/`JumpView` need the elapsed-fraction semantics as-is for
-  interpolation. The `RestKind kind` parameter picks the bar color
-  (`REST_BAR_COLOR` orange for `Long`, `SHORT_REST_BAR_COLOR` green for `Short`) —
-  same `drawCellOutline`-style "one primitive, per-kind color constant" pattern as
-  the selection/jump highlights. `getWindowName()` forwards to `Img::windowName()`.
-- `SpriteManager` — builds sprite file paths as
-  `{assets}/{piecesFolder}/{TYPE}{COLOR}/states/{state}/sprites/{frame}.png`.
-  `getPieceSprite` caches **decoded** `Img`s in `spriteCache` (keyed by
-  type+color+state+frame), not just path strings — each unique sprite is read
-  and resized from disk exactly once; every later call (every piece, every
-  frame, in the live render loop) returns a cheap in-memory `Img` copy
-  (`cv::Mat::clone()`, no disk I/O/decode). This matters a lot once pieces
-  animate: the old path-only cache re-read+re-decoded every visible sprite from
-  disk on every single frame, which was the actual bottleneck behind visibly
-  stuttery motion (the render *loop* was already running every iteration — each
-  individual `render()` call was just slow). State-to-folder-name conversion is no
-  longer a private `SpriteManager` method — it now calls the free function
-  `pieceStateToString` (`common/enums/PieceStateToString.h`), which is what
-  `getPath`/`getPieceSprite`'s cache key both call through. **Still out of sync with
-  the actual on-disk folder names for two of the four values**: it emits
-  `"moving"`/`"captured"` but the folders are `idle/move/jump/short_rest/long_rest` —
-  requesting a `Moving`-state sprite will still fail to load. Only `Idle → "idle"` and
-  the new `Jump → "jump"` mapping are correct. `typeToString`'s default case and
-  `colorToString`'s fallback also produce wrong-but-plausible values for
-  `Empty`/`None` inputs rather than erroring (latent, since `Renderer` filters out
-  `Empty` pieces before calling it).
-- `AnimationFrame` — a small UI-layer collaborator (constructed with a `const
-  BoardCanvas&`) that is the **only** place deciding, per board square, what to
-  render: `resolve(const GameView&, row, col, pieceId)` returns a `Resolution{PieceState
-  state; int frame; PixelPosition position;}` (`pieceId` — supplied by `Renderer` from
-  the `PieceView` it already looked up for that square — is only used by the `Idle`
-  fallback below, to phase-offset that piece's looping animation). It checks whether that square is the
-  `from` of an active `Motion` (→ `PieceState::Idle`, frame `1`, interpolated pixel
-  position via `canvas.getInterpolatedPosition`) or the position of an active `Jump`
-  (→ `PieceState::Jump`, a frame computed from `jump.getProgress(currentTime)` via a
-  private non-looping `frameIndexForProgress(progress, frameCount)` helper — hardcoded
-  `frameCount = 5` to match the on-disk sprite count, since no JSON parsing exists yet
-  to read it from `config.json`, same MVP simplification as the rest of the codebase —
-  and `canvas.getCellPosition(row, col)`), or the position of any `RestView` in
-  `gameView.getRests()` (→ `rest.getKind()` picks `PieceState::LongRest` or
-  `PieceState::ShortRest`, a frame computed the same way from
-  `rest.getProgress(currentTime)` via the same `frameIndexForProgress` helper —
-  `LONG_REST_FRAME_COUNT`/`SHORT_REST_FRAME_COUNT`, both `5` to match the on-disk
-  `long_rest`/`short_rest` sprite counts — and `canvas.getCellPosition(row, col)`), or
-  neither of the above (→ `PieceState::Idle`, a real **looping** animation via a second
-  private helper, `frameIndexForLoop(currentTime, frameCount, framesPerSecond,
-  phaseOffset)` — unlike `frameIndexForProgress`, this one has no start/end and
-  never holds on a last frame: it derives the frame purely from
-  `gameView.getCurrentTime()` and cycles forever, `IDLE_FRAME_COUNT = 5` /
-  `IDLE_FRAMES_PER_SECOND = 6` matching the on-disk `idle/config.json`
-  (`is_loop: true`, `frames_per_sec: 6`), same hardcoded-since-no-JSON-parsing
-  simplification as the other frame counts. `phaseOffset` is the square's `pieceId`,
-  so idle pieces don't all animate in lockstep — each piece's loop is shifted by its
-  own id before the modulo, `canvas.getCellPosition(row, col)`). The rest check is a linear scan over
-  `gameView.getRests()` per square (fine at board scale) and is checked *after*
-  Motion/Jump and *before* the final `Idle` fallback — a resting piece is never also
-  an active Motion/Jump target, since a `Rest` (of either kind) only starts once
-  `settleCompletedMotions`/`settleCompletedJumps`/the ambush branch of `executeMove`
-  has already deactivated the motion/jump for that piece. This is what makes the
-  jumping-piece and resting-piece (both kinds) sprite animations possible; `BoardCanvas`
-  still owns the actual pixel arithmetic
-  (`AnimationFrame` only decides *which* `BoardCanvas` method's result to use), and
-  `SpriteManager` still owns turning `(PieceView, PieceState, frame)` into an `Img`.
-- `Renderer::render(const GameView&)` — `canvas.beginFrame()`, then: iterates all
-  cells, skips `Empty` squares, and for every occupied square asks
-  `AnimationFrame::resolve(gameView, row, col, piece.getId())` for the `{state, frame, position}` to
-  draw, fetches that sprite from `SpriteManager`, and draws it at that pixel position
-  via `canvas.drawPieceAtPixel`. `Renderer` itself no longer contains any
-  motion/jump-specific branching (no more "skip this cell, it's drawn separately
-  below" special case) — that decision now lives entirely in `AnimationFrame`. After
-  the per-square loop: if a jump is active, draws a jump highlight at its position;
-  draws a rest-progress bar (color chosen by `rest.getKind()`) for every `RestView` in
-  the snapshot; if there's a selection, draws a selection highlight; finally
-  `canvas.show()`. Purely a drawing
-  operation: `void`, no return value, no awareness that a "frame" is part of a loop or
-  that input exists.
-- `GameLoop` — the live game loop and the **only** place in `UI/` that touches
-  input or `logic/*`. Constructed with `Controller&`, `Renderer&`, `BoardCanvas&`.
-  `run()`: registers `cv::setMouseCallback` on `canvas.getWindowName()` once (a static
-  trampoline casts `void* userdata` back to `GameLoop*` and dispatches on the event
-  type: `EVENT_LBUTTONDOWN` → `onMouseDown` → `controller.handlePixelClick(PixelPosition(x,
-  y))`; `EVENT_RBUTTONDOWN` → `onMouseRightDown` → `controller.handlePixelJump(PixelPosition(x,
-  y))` — the only input path that can ever produce an active `Jump` in the live
-  game), then loops: measure wall-clock delta via `std::chrono::steady_clock` →
-  `controller.wait(deltaMs)` (this is what finally drives `GameEngine::advanceTime`
-  off a real clock, instead of only a REPL/test calling it manually) →
-  `renderer.render(controller.getGameView())` → `cv::waitKey(1)` (owned here, not in
-  `Renderer`/`Img`, since interpreting a keypress is an input decision) → stops the
-  loop on ESC or `controller.isGameOver()`.
+- `BoardMapper` — moved here from `server/src/game/Controller/BoardMapper` (its
+  original home, before the split). `pixelToCell(...)` returns a `common::PositionView`
+  now, not a domain `Position` — a deliberate change made when it moved, since the
+  client must never depend on `server/src/game/model` at all; `PositionView` is
+  already the "safe for a network client" row/col carrier `common/DTO` provides.
+- `GameClient` — the network-backed stand-in for what used to be a directly-held
+  `Controller&`. Exposes the exact same method surface `GameLoop` always called:
+  `handlePixelClick(PixelPosition)`, `handlePixelJump(PixelPosition)`, `getGameView()`,
+  `isGameOver()`. Constructed with a `WebSocketClient&`; registers itself as that
+  client's message handler (via the new `WebSocketClient::setOnMessage`, added
+  specifically to solve this construction-order problem: `GameClient` can't exist
+  before `WebSocketClient` does, so the handler can't be supplied at `WebSocketClient`
+  construction time the way `CliShell`'s simpler print-only handler is) and
+  immediately sends a `JoinGameRequest`.
+  - `handlePixelClick` reimplements `Controller::click()`'s old select-then-move UX,
+    but against the **last-received `BoardView`/`PieceView` snapshot** instead of a
+    live `Board`/`Piece` — first click selects a same-color piece (checked against
+    that snapshot), a second click on a different-color piece or empty square sends a
+    `protocol::MoveRequest{fromRow, fromCol, toRow, toCol}` and clears the client's own
+    selection. This selection state is **entirely local to `GameClient`** — the
+    server-side `Controller::move()` path never sets `hasSelection` at all (see
+    "Controller & command flow" above), so `getGameView()` here substitutes this
+    class's own tracked `hasSelection`/`selectedPosition` into the `GameView` it
+    returns, specifically so the selection-highlight rendering feature (in
+    `AnimationFrame`/`Renderer`) keeps working under the network split.
+  - `handlePixelJump` is a direct, stateless `protocol::JumpRequest` send — mirrors
+    `Controller::jump()`'s always-direct behavior, no selection involved.
+  - `onMessage(json)` (private, invoked from `WebSocketClient`'s background thread) —
+    on a `game_view` message, replaces the stored `GameView` snapshot; on `game_over`,
+    sets a local flag `isGameOver()` reads. Any other type, or any parse failure, is
+    silently ignored (never throws out of a socket callback). All shared state is
+    behind one `std::mutex`, since this callback runs on a different thread than
+    `handlePixelClick`/`getGameView`/`isGameOver` (the render loop's thread) —
+    same category of problem `CliShell`'s output mutex already solves, just for
+    mutable game state instead of interleaved console output.
 
 ## Current state of integration
 
-The logic layer is now wired into the graphical executable:
-`main.cpp` constructs an `EventBus`, calls `GameFactory::createNewGame(eventBus)`,
-publishes a one-off `GameStartedEvent` → `Controller` → constructs
-`BoardCanvas`/`SpriteManager`/`AnimationFrame`/`Renderer` → hands them plus the
-`Controller` to a `GameLoop` and calls `run()`. This is now the only entry point
-needed to play a game with a live board, mouse input, and real-time piece movement.
+There is exactly one way to play now: start `KungFuChessServer`, then run
+`KungFuChessGuiClient` against it. `gui_main.cpp` connects a `WebSocketClient`,
+constructs `GameClient` around it (which joins the session), then builds
+`BoardCanvas`/`SpriteManager`/`AnimationFrame`/`Renderer`/`GameLoop` exactly as the old
+(now-deleted) local `src/main.cpp` did with a `Controller`. The old single-process,
+no-network "hotseat" path (`GameFactory`+`Controller`+`GameLoop` all in one address
+space) no longer exists in any form — it was fully retired once this networked path
+was verified end-to-end.
 
-What's still missing/rough:
-- **Sprite-level animation exists for `Jump` and both rest kinds, not yet for
-  `Captured`** — `AnimationFrame` swaps to the real
-  `PieceState::Jump`/`LongRest`/`ShortRest` sprite frames (5 frames each, non-looping)
-  while a jump/rest is active, and a post-jump `Rest` is now started in every case a
-  `Jump` can end (natural timeout, or being consumed by an ambush-capture) — see
-  Real-time mechanics section. `Motion` (traveling pieces) still renders via
-  `PieceState::Moving` sprite frames plus `BoardCanvas::getInterpolatedPosition` for
-  the actual pixel movement; both rest cooldowns additionally keep their `BoardCanvas`
-  progress-bar overlay *alongside* their sprite (deliberate — the sprite holds on its
-  last frame for the whole rest per `long_rest`/`short_rest`'s `config.json`
-  `is_loop: false`, so the bar is still the only thing conveying *how much longer*; the
-  two kinds' bars are drawn in different colors so they're distinguishable at a
-  glance). `Captured` has no on-disk sprite folder at all and is not rendered by
-  `AnimationFrame` — see gaps list; adding it would require new art assets, not just
-  code.
-- No visual feedback for game-over — the loop just stops; nothing is drawn to signal
-  who won or that the window is about to close.
-- The text-only REPL (`CommandProcessor` / `src/tests/main.cpp`) still exists
-  side-by-side as a console-only way to exercise the logic stack, and (as of this
-  review) isn't attached to a CMake build target.
+**Known limitation, not yet addressed**: `server/src/network/WebSocketServer` is still
+purely request/response (one inbound message → one reply on the same connection,
+nothing unsolicited) — this was deliberately left unchanged during the client/server
+split. `GameSession`'s `EventBus` subscribers *do* build the right
+`protocol::GameViewMessage`/`GameStartedMessage`/`GameOverMessage` for every event that
+fires, but the `BroadcastFn` callback they're handed today (wired up in
+`server/main.cpp`) just logs to console — there is no real per-connection push
+transport for it to call yet. In practice this means: a client's `GameView` only
+refreshes as the *response* to that same client's own `move`/`jump` request (which
+`GameRequestHandler` always returns fresh); a motion settling, a capture resolving, or
+game-over triggered by the server's own tick loop between two client actions is
+**not** visible to that client until its next action. Building real server push
+(tracking connections per session, extending `WebSocketServer` to send unsolicited
+messages) is the natural next step, not yet done.
 
-## Testing (`src/tests/`)
+What's still missing/rough, carried over unchanged from before the split:
+- **Sprite-level animation** still doesn't cover `Captured` (no on-disk sprite folder
+  exists for it at all — see Gaps).
+- No visual feedback for check/checkmate/stalemate (none of those are implemented at
+  the rules level either — see Gaps).
+- Password hashing (`server/src/persistence/UserRepository`) is still plain text.
+- `wss://`/TLS still doesn't exist — plain `ws://` only.
 
-doctest framework (single header, `src/tests/doctest.h`), driven by
-`src/tests/test_main.cpp` (`DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN`). Tests mirror the
-`logic/` structure under `src/tests/logic_tests/{controller,engine,io,model,rules}/`.
-Pattern: one `TEST_CASE` per class with `SUBCASE`s per scenario; no fixtures, no
-mocking (everything is tested against real concrete objects). Notably **no tests for
-`src/UI/*`**, no tests for `CoordinateConverter`, and no tests for `common/DTO/*`
-conversion constructors, including `BoardView(const Board&)` — worth adding coverage
-for now that it's relied on by `Controller::getBoardView()`.
+## Testing
+
+doctest framework (single header, vendored as its own copy in each of
+`server/tests/doctest.h`, `client/tests/doctest.h`, `protocol/tests/doctest.h` — kept
+as separate copies rather than a shared location, since each is an independent build
+target and this is a vendored single-header third-party file, not project code).
+
+- `server/tests/` — `auth_service_test.cpp`, `user_repository_test.cpp` (persistence/
+  auth, no sockets), `game_session_test.cpp`/`game_request_handler_test.cpp` (new —
+  `GameSession`'s event→broadcast wiring with a fake broadcast callback, and
+  `GameRequestHandler`'s JSON dispatch/error handling), `common_tests/` (moved from
+  `src/tests/common_tests/` — `EventBus`/`PieceStateToString`/`TimeProgress`), and
+  `game_tests/` (moved from `src/tests/logic_tests/` — mirrors
+  `server/src/game/{model,rules,Engine,Controller,IO}`, same one-`TEST_CASE`-per-class/
+  `SUBCASE`-per-scenario pattern, no mocking). All in one binary,
+  `KungFuChessPersistence_tests` (name kept from before the split rather than renamed,
+  since it now covers considerably more than persistence).
+- `protocol/tests/` (new) — round-trip `toJson()`→`fromJson()` coverage for every game
+  message struct, including a full `GameViewMessage` round-trip through a real
+  `BoardView`/`MotionView`/`JumpView`/`RestView` snapshot.
+- `client/tests/` (new) — `board_mapper_test.cpp` (moved from
+  `src/tests/logic_tests/controller/`, updated for `BoardMapper`'s `PositionView`
+  return type) and `game_client_test.cpp` (construction/default-state/no-crash-without-
+  a-live-connection coverage only — `GameClient`'s actual click-to-select-then-move
+  decision logic depends on real board content that only ever arrives from a live
+  server's `GameViewMessage`, so that path is verified manually against a running
+  server instead of faked in a unit test).
+
+Notably **no tests for `client/src/ui/*`**, no tests for `CoordinateConverter`, and no
+tests for the DTOs' `toJson()`/`fromJson()` round-trips *outside* of what
+`protocol/tests` happens to exercise via `GameViewMessage` — worth adding direct
+coverage for `BoardView`/`PieceView`/etc.'s own serialization independent of the
+message wrapper.
 
 ## Server / persistence / networking layer (`server/`, `protocol/`, `client/`)
 
-Three independent top-level directories — none under `src/`, and none linked into
-`KungFuChess`/`KungFuChess_tests`. Together they're the first networking slice of
-turning this into a client/server game: a SQLite persistence layer (as before), a real
-`ws://127.0.0.1:9002` WebSocket server handling `register`/`login`, a JSON message
-contract shared by both ends, and a standalone CLI client that speaks it. Still no
-rooms/sessions/spectators, no `games` table, no game-command message types — only auth
-exists over the wire so far.
+The full networked client/server design. `server/` hosts persistence, the
+authoritative game engine, and both the auth and game-command JSON APIs; `protocol/`
+is the shared wire-format contract; `client/` has two executables — the original
+auth-only CLI, and the actual playable GUI.
 
 ### `protocol/` — shared JSON message contract
 
-Header-only, depended on by both `server/` and `client/` so neither side duplicates the
-wire format. `add_subdirectory(protocol)` in the root `CMakeLists.txt` builds it as an
-`INTERFACE` target, `KungFuChessProtocol`, linking `nlohmann_json::nlohmann_json`.
+Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`),
+`server/`, and `client/`, so no one duplicates the wire format.
 
-- `protocol/include/protocol/MessageType.h` — the JSON envelope's `"type"` string
-  constants: `register`, `login`, `register_result`, `login_result`, `error`.
-- `protocol/include/protocol/Message.h` — `RegisterRequest`/`LoginRequest` (client→server)
-  and `RegisterResult`/`LoginResult`/`ErrorResult` (server→client) structs, each with an
-  in-class `toJson()`/`fromJson()` pair (built on `nlohmann::json`) — the only place that
-  knows that message's field names. `error` fields are short machine-readable codes
-  (`username_taken`, `invalid_credentials`, `malformed_request`, `unknown_type`), not
-  human text, so both the CLI and a future GUI can branch on them directly. Free function
-  `readType(const nlohmann::json&)` reads the envelope's `"type"` field (throws
-  `nlohmann::json::exception` on a missing field, same as a malformed-JSON parse — callers
-  wrap the whole decode step in one `try`/`catch`).
+- `MessageType.h` — the JSON envelope's `"type"` string constants: `register`,
+  `login`, `register_result`, `login_result`, `error`, and (new) `join_game`,
+  `game_joined`, `move`, `jump`, `game_view`, `game_started`, `game_over`.
+- `Message.h` — one struct per message, each with an in-class `toJson()`/`fromJson()`
+  pair (built on `nlohmann::json`) — the only place that knows that message's field
+  names. Auth structs (`RegisterRequest`/`LoginRequest`/`RegisterResult`/
+  `LoginResult`/`ErrorResult`) are unchanged from before the split. New game structs:
+  `JoinGameRequest`/`GameJoinedResult{sessionId}`,
+  `MoveRequest{fromRow, fromCol, toRow, toCol}`, `JumpRequest{row, col}`,
+  `GameViewMessage{GameView view}` (wraps the DTO snapshot directly, calling its own
+  `toJson()`/`fromJson()`), `GameStartedMessage`/`GameOverMessage` (empty payloads,
+  only the `"type"` tag carries information — mirroring `GameStartedEvent`/
+  `GameOverEvent`, which are likewise empty). `readType(json)` is unchanged.
 
-### `server/` — persistence + WebSocket networking
+### `server/` — persistence + game engine + WebSocket networking
 
-- `server/src/persistence/*` — unchanged from before: `UserRecord` (plain DB-row struct),
-  `Database` (owns the `SQLite::Database` connection, creates the `users` table),
-  `UserRepository` (`createUser`/`findByUsername`/`findById`/`verifyPassword`/
-  `updateScore`; passwords still stored/compared **in plain text**, hashing deliberately
-  postponed). `createUser` still lets SQLite's `UNIQUE` constraint on `username` throw
-  `SQLite::Exception` straight through on a duplicate.
-- `server/src/services/AuthService` — new. Thin, networking-agnostic wrapper around
-  `UserRepository`: `registerUser(username, password)` → `auth::RegisterOutcome{success,
-  userId, error}`, `login(username, password)` → `auth::LoginOutcome{success, userId,
-  score, error}`. Catches `UserRepository::createUser`'s `SQLite::Exception` and turns it
-  into `error = "username_taken"`; `login` calls `verifyPassword` then re-fetches the row
-  for `userId`/`score`. Guards every call with its own `std::mutex` — `Database`/
-  `UserRepository` share one non-synchronized SQLite connection, and once wired into
-  `WebSocketServer` this is called concurrently from every connected client.
-- `server/src/handlers/AuthRequestHandler` — new. The only translation layer between raw
-  JSON and `AuthService`: `handle(rawJson)` parses the envelope (via `protocol::readType`),
-  dispatches `register`/`login` to the matching `AuthService` call, and serializes the
-  result back to a JSON string via the matching `protocol::*Result::toJson()`. Unknown
-  `"type"` → `ErrorResult{"unknown_type"}`; any `nlohmann::json::exception` (bad JSON,
-  missing fields) → `ErrorResult{"malformed_request"}`. Never throws out of `handle()` —
-  one bad message can't take down the server or any other connection. Knows nothing about
-  ixwebsocket.
-- `server/src/network/WebSocketServer` — new, and the **only** file in the codebase that
-  includes ixwebsocket's server-side headers (a small pimpl wraps `ix::WebSocketServer`
-  behind a plain `std::function<std::string(const std::string&)> RequestHandler`
-  constructor argument). For every inbound text message on any connection, it calls the
-  handler and sends the return value back on that same connection
-  (`ix::WebSocketServer::setOnClientMessageCallback`, which hands back the specific
-  `ix::WebSocket&` the message arrived on). `start()` calls `listen()` then `start()` on
-  the underlying server (throws `std::runtime_error` if the port can't be bound); `wait()`
-  blocks the calling thread. Calls `ix::initNetSystem()`/`uninitNetSystem()` (required for
-  Winsock on Windows, a no-op elsewhere) in its constructor/destructor.
-- `server/src/main.cpp` — now the real server entry point (previously a demo that just
-  seeded/printed two users). Builds `Database` → `UserRepository` → `AuthService` →
-  `AuthRequestHandler`, constructs a `WebSocketServer(9002, handler)`, calls `start()` then
-  `wait()` — blocks forever serving requests until the process is killed.
-- `server/CMakeLists.txt` — target graph: `KungFuChessPersistence` (unchanged) →
-  `KungFuChessAuth` (new static lib, `services/` — depends only on Persistence, **no**
-  ixwebsocket, so it stays fast/dependency-light to unit test) → `KungFuChessNetwork` (new
-  static lib, `handlers/` + `network/` — depends on Auth + `KungFuChessProtocol` +
-  `ixwebsocket::ixwebsocket`) → `KungFuChessServer` executable (`main.cpp`, depends on
-  Network). Still separately `FetchContent`s `SRombauts/SQLiteCpp` (server-only; see Build
-  system for why `ixwebsocket`/`nlohmann_json` are fetched at the root instead).
-  `KungFuChessPersistence_tests` now additionally links `KungFuChessAuth`, so
-  `server/tests/auth_service_test.cpp` (new — same doctest conventions as
-  `user_repository_test.cpp`, in-memory DB, no sockets) builds into the same binary as
-  `server/tests/user_repository_test.cpp`.
+- `server/src/persistence/*` — unchanged: `UserRecord`, `Database`, `UserRepository`
+  (passwords still plain text, deliberately postponed).
+- `server/src/services/AuthService` — unchanged: thin, networking-agnostic wrapper
+  around `UserRepository`, its own mutex (shared SQLite connection, called
+  concurrently once wired into `WebSocketServer`).
+- `server/src/game/` — the domain simulation, moved here from `src/logic/*` verbatim
+  (see Module map / Core domain model / Rules system / Real-time mechanics above for
+  what actually lives here — nothing about the rules/timing/mechanics changed, only
+  the location and `Controller`'s pixel-facing surface, which was removed).
+- `server/src/services/GameSession` — **new**. Owns one `EventBus` + one `GameEngine`
+  (built via `GameFactory::createNewGame`) + one `Controller` — this is the seam where
+  "UI and logic talk in-process" became "network client and authoritative server talk
+  over JSON." Publishes `GameStartedEvent` itself right after construction (the same
+  contract the old `main.cpp` used to fulfill manually) and subscribes handlers for
+  all four `Events.h` types: `GameStartedEvent`/`GameOverEvent` map to their matching
+  protocol message; `MoveExecutedEvent`/`PieceCapturedEvent` (which have no dedicated
+  wire message) instead trigger a fresh `GameViewMessage` broadcast, since that already
+  conveys the resulting state fully — no need to invent a redundant per-event message
+  shape. Every public method (`requestMove`/`requestJump`/`tick`/`getGameView`/
+  `isGameOver`) locks its own `std::mutex` — genuinely necessary, not defensive
+  filler: the server's tick-loop thread and a request-handling thread can both call
+  into the same session's `GameEngine`, which has no locking of its own (same category
+  of problem `AuthService`'s mutex already solves for `UserRepository`'s shared
+  connection).
+- `server/src/services/GameSessionManager` — **new**. Owns every active `GameSession`
+  keyed by id, guarded by its own separate mutex (the map itself, not any one
+  session's game state, is what needs protecting here — the tick loop iterates this
+  map while a request-handling thread can concurrently insert into it via
+  `getOrCreateDefaultSession`). Today only ever exposes one implicit session; this is
+  the extension point for real multi-game support later (a pure addition — real
+  `join`/`create`-by-id is additive on top of an already-real id→session map, not a
+  redesign).
+- `server/src/handlers/GameRequestHandler` — **new**, parallel to
+  `AuthRequestHandler`: dispatches `join_game`/`move`/`jump` to
+  `GameSessionManager`/`GameSession`, returns a fresh `protocol::GameViewMessage`
+  snapshot after every `move`/`jump` (this is currently the *only* way a client's view
+  actually updates — see "Current state of integration" above for the real limitation
+  this implies), `ErrorResult` on anything malformed. Never throws.
+- **Server-owned tick loop** (`server/src/main.cpp`) — a detached `std::thread`
+  sleeping `TimingConfig::SERVER_TICK_INTERVAL_MILLIS` then calling
+  `sessionManager.tickAll(...)`, forever, for the life of the process. This replaces
+  the old `GameLoop`-driven wall-clock `controller.wait(deltaMs)` call — the
+  authoritative clock now advances whether or not any client is even connected.
+- `server/src/main.cpp` also composes `AuthRequestHandler` and `GameRequestHandler`
+  behind one `dispatch()` function: tries the auth handler first, only falls back to
+  the game handler if the auth handler's response is specifically
+  `{"type":"error","error":"unknown_type"}` — so neither handler needs to know the
+  other's message-type set; adding a new type to either one never requires touching
+  this dispatch.
+- `server/CMakeLists.txt` — see "Build system" above for the full target graph.
+  `KungFuChessGameSession` is deliberately its own target, not folded into
+  `KungFuChessAuth`, even though both live under `src/services/` — a library named
+  "Auth" building `GameSession` would be a misleading name for what it contains.
 
-### `client/` — standalone CLI client
+### `client/` — CLI client (unchanged) + GUI client (new, the actual game)
 
-A separate top-level directory/executable, not part of `server/`'s CMake tree, and
-deliberately structured so a future GUI client can reuse the network half unchanged.
+- `client/src/network/WebSocketClient` — mostly unchanged; gained one new method,
+  `setOnMessage(MessageHandler)`, letting the message handler be replaced after
+  construction (needed so `GameClient`, which doesn't exist yet when `WebSocketClient`
+  is first constructed, can register itself once it does).
+- `client/src/cli/CliShell` + `client/src/main.cpp` — unchanged: the interactive
+  auth-only CLI (`register`/`login`/`help`/`quit`), still a text-based stand-in from
+  before the GUI existed.
+- `client/src/ui/*` + `client/src/game/{BoardMapper,GameClient}` + `client/src/gui_main.cpp`
+  — the actual playable client; see "UI / rendering layer" and "`client/src/game/`"
+  above for the full breakdown, and "Current state of integration" for how they're
+  wired together and run.
 
-- `client/src/network/WebSocketClient` — the **only** file including ixwebsocket's
-  client-side headers (pimpl around `ix::WebSocket`). `start()` connects asynchronously in
-  the background (auto-reconnecting on drop); `waitForConnection(timeoutMs)` blocks on a
-  `std::condition_variable` signaled from the `ix::WebSocketMessageType::Open` case of the
-  internal message callback — sending before the handshake completes silently drops the
-  message (ixwebsocket only queues once the socket is actually open), so callers must wait
-  for this before calling `send()`. `send(json)` forwards to `ix::WebSocket::send`;
-  inbound `ix::WebSocketMessageType::Message`s are handed to the caller's `MessageHandler`
-  callback, invoked on ixwebsocket's own background thread. Built as its own static lib
-  target, `KungFuChessClientNetwork`, specifically so a future GUI client links this exact
-  target instead of re-implementing it.
-- `client/src/cli/CliShell` — the interactive `std::cin` loop: parses
-  `register <user> <pass>` / `login <user> <pass>` / `help` / `quit`/`exit`, builds the
-  matching `protocol::RegisterRequest`/`LoginRequest` and sends it, and prints `[server]
-  ...` for every response as it arrives. Takes a `std::mutex&` (owned by `main.cpp`,
-  shared with the `WebSocketClient` message callback) and locks it around every `std::cout`
-  write so prompts/usage text and async server responses — printed from two different
-  threads — never interleave mid-line.
-- `client/src/main.cpp` — connects a `WebSocketClient` to `ws://127.0.0.1:9002`, calls
-  `waitForConnection(5000)` (prints an error and exits `1` on timeout — e.g. server not
-  running), then runs a `CliShell` until `quit`/`exit`/EOF.
-- `client/CMakeLists.txt` — `KungFuChessClientNetwork` (static lib, `network/` — depends on
-  `KungFuChessProtocol` + `ixwebsocket::ixwebsocket`) → `KungFuChessCliClient` executable
-  (`main.cpp` + `cli/`, depends on ClientNetwork).
-
-Not yet done: any game-command message type (`move`, `jump`, etc.) or rooms/sessions —
-the server has no concept of an in-progress game at all yet, so there's nothing for a
-game command to address; password hashing (still plain text, as before); `wss://`/TLS
-(plain `ws://` only); request/response correlation IDs (the CLI just prints responses
-as they arrive, fine for one interactive user issuing one request at a time — would need
-revisiting if a client ever has multiple requests in flight concurrently).
+Not yet done: real server→client push (see "Current state of integration" above);
+real multi-session join/create by id (`GameSessionManager` is ready for it, nothing
+calls it yet); password hashing; `wss://`/TLS; request/response correlation IDs (fine
+today since each client only ever has one request in flight at a time — `GameLoop`'s
+click handling is synchronous with respect to the UI thread); reconnect/resume-session
+handling if a client's connection drops mid-game.
 
 ## Known gaps / things to be careful about when editing
 
-1. ~~Logic layer isn't wired into the graphical executable~~ — fixed: `GameFactory` +
-   `UI/GameLoop` now provide a live, playable loop (see "Current state of integration").
-2. ~~`BoardView(const Board&)` produces a wrongly-ordered/sparse vector~~ — fixed: it
-   now builds a dense, row-major vector consistent with `getPiece(row, col)`'s indexing.
-3. ~~`PieceState` enum doesn't cover the on-disk `short_rest` cooldown state~~ —
-   fixed: `PieceState` now has 6 values (`Idle, Moving, Captured, Jump, LongRest,
-   ShortRest`), `Rest`/`RestView` carry a `RestKind` so `AnimationFrame` can tell a
-   post-move rest from a post-jump rest apart, and `GameEngine` starts a
-   `RestKind::Short` rest both when a `Jump` times out naturally and when it's
-   consumed by an ambush-capture (see Real-time mechanics section). `Captured` still
-   has no backing on-disk sprite folder at all — `pieceStateToString` maps it to
-   `"captured"` regardless, but no code path ever requests it, so this remains latent
-   rather than an active bug. `Idle`/`Moving`/`Jump`/`LongRest`/`ShortRest` all map to
-   correct, existing on-disk folder names.
+1. ~~Logic layer isn't wired into the graphical executable~~ — long since fixed, and
+   then superseded entirely: the graphical executable itself (the old local, no-network
+   `KungFuChess`) is now retired. The one graphical executable that exists,
+   `KungFuChessGuiClient`, is wired into the server over the network instead.
+2. ~~`BoardView(const Board&)` produces a wrongly-ordered/sparse vector~~ — fixed, and
+   unaffected by the client/server split (this constructor still only ever runs
+   server-side, since only the server has a real `Board` to convert from).
+3. ~~`PieceState` enum doesn't cover the on-disk `short_rest` cooldown state~~ — fixed.
+   `Captured` still has no backing on-disk sprite folder — latent, since no code path
+   ever requests it.
 4. `Piece::setState` is never called outside tests — no production code marks a piece
    as `Moving`/`Captured`.
 5. `RealTimeArbiter` supports only one in-flight motion/jump globally, not per-piece —
-   a deliberate MVP simplification worth knowing about before extending it.
-   **Partially addressed for post-move/post-jump cooldowns**: `Rest` *is* per-piece
-   (keyed by piece id, independent per piece, doesn't block other pieces), so
-   multiple pieces can be resting (either `RestKind::Long` or `RestKind::Short`)
-   simultaneously. The `Motion`/`Jump` themselves are still single-global exactly as
-   before — only one piece can be *traveling*/*jumping* at a time board-wide; this
-   gap is not fixed for those.
-6. Cell-pixel size (`100`) is hardcoded independently in three places
-   (`BoardMapper`, `CoordinateConverter`, `BoardCanvas`'s constructor arg in
-   `main.cpp`) with no shared constant.
-7. `config.json` (animation/physics metadata) and `board.csv` exist on disk but are
-   parsed by no current code. `KungFuChess`/`KungFuChess_tests` (the `src/` build) still
-   link no JSON library; `nlohmann_json` is now linked, but only into `protocol`/
-   `server`/`client` — pulling it into `src/` too, and actually parsing these files with
-   it, is still a follow-up.
+   a deliberate MVP simplification, unaffected by the client/server split. `Rest` is
+   the one part of this that *is* per-piece.
+6. ~~Cell-pixel size (`100`) hardcoded independently in three places~~ — fixed as part
+   of the client/server split: `common/Config/BoardConfig::CELL_SIZE` is now the single
+   source of truth for `BoardMapper`, `CoordinateConverter`, and the
+   `BoardCanvas`/`SpriteManager` construction calls in `gui_main.cpp`.
+7. `config.json` (animation/physics metadata) and `board.csv` still exist on disk but
+   are parsed by no current code, unaffected by the split.
 8. No check/checkmate/castling/en-passant/stalemate — only raw movement legality plus
-   king-capture-ends-game.
-9. `src/tests/main.cpp` (the REPL entry point) is not attached to any current CMake
-   target — confirm before assuming `cmake --build` produces it.
+   king-capture-ends-game. Unaffected by the split.
+9. ~~`src/tests/main.cpp` (the REPL entry point) is not attached to any current CMake
+   target~~ — superseded: `src/` (including that file) was deleted entirely in the
+   final phase of the client/server split. `CommandProcessor` (the REPL's underlying
+   logic) still exists and is still compiled (into `KungFuChessGame`), but now has
+   **no entry point of any kind** — only `command_processor_test.cpp`'s stdin
+   injection exercises it. If a text-based server-side debugging tool is wanted again,
+   it needs a new entry point built from scratch, not a resurrection of the old one
+   (which depended on the now-removed `BoardMapper`-in-`Controller` pixel translation).
 10. Dead code: a large commented-out earlier `Img::draw_on` implementation still sits
-    in `UI/img.cpp`.
+    in `client/src/ui/img.cpp`, unaffected by the split.
+11. **New, from the client/server split**: no real server→client push transport yet —
+    see "Current state of integration" above. This is the biggest remaining gap in the
+    networked design; everything else in this list is a pre-existing, smaller issue.
+12. **New**: `common/DTO`'s converting-from-domain constructors must stay in their own
+    separate `*FromDomain.cpp` files, not be merged back into each DTO's main `.cpp` —
+    see "DTO layer" above for exactly why, and what silently breaks if this is ignored.
 
 ## Where to look for X
 
 | Task | Start here |
 |---|---|
-| Change/add a piece's movement rule | `src/logic/rules/<Piece>Rule.cpp`, registered in `RuleEngine`'s constructor |
-| Change move/jump timing (cooldowns, speed) | `src/logic/Engine/GameEngine.cpp` (`MILLIS_PER_SQUARE`, `calculatePathLength`), `src/logic/Controller/RealTimeArbiter.cpp` |
-| Change the post-move (`RestKind::Long`) or post-jump (`RestKind::Short`) rest/cooldown duration or its guard | `src/logic/Engine/GameEngine.cpp` (`REST_DURATION_MILLIS`/`JUMP_REST_DURATION_MILLIS`, `settleCompletedMotions`/`settleCompletedJumps`/the ambush branch of `executeMove`, the `isPieceResting` checks in `requestMove`/`requestJump`), `src/logic/Controller/RealTimeArbiter.cpp` (`startRest`/`isPieceResting`/`getActiveRests`/`purgeExpiredRests`) |
-| Change what happens when a move completes (capture, promotion, game-over) | `GameEngine::executeMove` |
-| Change click/selection UX | `src/logic/Controller/Controller.cpp` |
-| Parse/print board text (REPL only, not production setup) | `src/logic/IO/BoardParser.cpp` / `BoardPrinter.cpp` |
-| Change the initial/starting board setup | `src/logic/IO/GameFactory.cpp` (`createClassicBoard`) |
-| Change the live loop, mouse handling, or when the game stops | `src/UI/GameLoop.cpp` |
-| Change the per-frame data the UI renders from | `src/logic/Controller/Controller.cpp` (`getGameView`), `src/common/DTO/GameView.h`/`MotionView.h`/`JumpView.h`/`RestView.h` |
-| Change the traveling-piece animation, jumping-piece animation, resting-piece animation, selection/jump highlights, or rest-progress bar | `src/UI/AnimationFrame.cpp` (which state/frame/position a square renders), `src/UI/Renderer.cpp` (draw order for the overlays), `src/UI/BoardCanvas.cpp` (pixel math, colors/thicknesses) |
-| Fix/extend sprite rendering | `src/common/enums/PieceStateToString.h` (`Captured` has no backing on-disk folder), `src/UI/SpriteManager.cpp` (path/cache-key building), `src/UI/AnimationFrame.cpp` (which state/frame a piece requests) |
-| Change how pixel clicks map to board cells | `src/logic/Controller/BoardMapper.cpp`, fed via `Controller::handlePixelClick`/`handlePixelJump` |
-| Add/adjust tests | `src/tests/logic_tests/<matching-folder>/`, `src/tests/common_tests/` |
-| Add a new event / subscribe to a game event | `src/common/EventBus/Events.h` (new event struct), `src/common/EventBus/EventBus.h` (generic bus, shouldn't need changes), publisher call sites in `src/logic/Engine/GameEngine.cpp` (`executeMove`, `settleCompletedMotions`) or `src/main.cpp`; tests in `src/tests/common_tests/event_bus_test.cpp` |
+| Change/add a piece's movement rule | `server/src/game/rules/<Piece>Rule.cpp`, registered in `RuleEngine`'s constructor |
+| Change move/jump timing (cooldowns, speed) | `common/Config/TimingConfig.h`, `server/src/game/Engine/GameEngine.cpp`, `server/src/game/Controller/RealTimeArbiter.cpp` |
+| Change the post-move (`RestKind::Long`) or post-jump (`RestKind::Short`) rest/cooldown duration or its guard | `common/Config/TimingConfig.h`, `server/src/game/Engine/GameEngine.cpp` (`settleCompletedMotions`/`settleCompletedJumps`/the ambush branch of `executeMove`), `server/src/game/Controller/RealTimeArbiter.cpp` |
+| Change what happens when a move completes (capture, promotion, game-over) | `server/src/game/Engine/GameEngine.cpp` (`executeMove`) |
+| Change click/selection UX (server-side REPL) | `server/src/game/Controller/Controller.cpp` (`click`) |
+| Change the direct from/to move command the network uses | `server/src/game/Controller/Controller.cpp` (`move`), `server/src/handlers/GameRequestHandler.cpp` |
+| Change client-side click-to-select-then-move UX | `client/src/game/GameClient.cpp` (`handlePixelClick`) |
+| Parse/print board text (REPL only, not production setup) | `server/src/game/IO/BoardParser.cpp` / `BoardPrinter.cpp` |
+| Change the initial/starting board setup | `server/src/game/IO/GameFactory.cpp` (`createClassicBoard`) |
+| Change the live loop, mouse handling, or when the game stops | `client/src/ui/GameLoop.cpp` |
+| Change the per-frame data the UI renders from | `server/src/game/Controller/Controller.cpp` (`getGameView`), `common/DTO/GameView.h`/`MotionView.h`/`JumpView.h`/`RestView.h` |
+| Change the traveling-piece animation, jumping-piece animation, resting-piece animation, selection/jump highlights, or rest-progress bar | `client/src/ui/AnimationFrame.cpp`, `client/src/ui/Renderer.cpp` (draw order), `client/src/ui/BoardCanvas.cpp` (pixel math, colors) |
+| Fix/extend sprite rendering | `common/enums/PieceStateToString.h`, `client/src/ui/SpriteManager.cpp`, `client/src/ui/AnimationFrame.cpp` |
+| Change how pixel clicks map to board cells | `client/src/game/BoardMapper.cpp`, fed via `GameClient::handlePixelClick`/`handlePixelJump` |
+| Add/adjust server-side domain tests | `server/tests/game_tests/<matching-folder>/`, `server/tests/common_tests/` |
+| Add a new event / subscribe to a game event | `common/EventBus/Events.h` (new event struct), publisher call sites in `server/src/game/Engine/GameEngine.cpp`, subscriber wiring in `server/src/services/GameSession.cpp` (`subscribeToEvents`) |
 | Change the `users` table / user persistence | `server/src/persistence/Database.cpp` (schema), `server/src/persistence/UserRepository.cpp`; tests in `server/tests/user_repository_test.cpp` |
 | Change register/login business logic (not the DB rows) | `server/src/services/AuthService.cpp`; tests in `server/tests/auth_service_test.cpp` |
-| Change the JSON wire format for a message | `protocol/include/protocol/Message.h` (field names, `toJson`/`fromJson`), `protocol/include/protocol/MessageType.h` (the `"type"` string) — both `server/src/handlers/AuthRequestHandler.cpp` and `client/src/cli/CliShell.cpp` build/consume these |
-| Add a new WebSocket message type/command | `server/src/handlers/AuthRequestHandler.cpp` (dispatch on `protocol::readType`), `protocol/include/protocol/Message.h`/`MessageType.h` (new request/result structs), `client/src/cli/CliShell.cpp` (new command) — `server/src/network/WebSocketServer` and `client/src/network/WebSocketClient` themselves don't need to change |
-| Change how the server binds/accepts WebSocket connections | `server/src/network/WebSocketServer.cpp` (the only file that includes ixwebsocket's server headers) |
-| Change how the CLI client connects or sends/receives | `client/src/network/WebSocketClient.cpp` (the only file that includes ixwebsocket's client headers), `client/src/cli/CliShell.cpp` (the command loop) |
+| Change game-session hosting, tick behavior, or session lookup | `server/src/services/GameSession.cpp`/`GameSessionManager.cpp`; tests in `server/tests/game_session_test.cpp` |
+| Change the JSON wire format for a message | `protocol/include/protocol/Message.h` (field names, `toJson`/`fromJson`), `protocol/include/protocol/MessageType.h` (the `"type"` string); round-trip tests in `protocol/tests/message_test.cpp` |
+| Add a DTO's own `toJson`/`fromJson`, or change one | `common/DTO/<Type>.h`/`.cpp` — but keep any converting-from-domain constructor in `<Type>FromDomain.cpp` (see DTO layer / Gaps #12 above) |
+| Add a new WebSocket message type/command | `server/src/handlers/GameRequestHandler.cpp` (or `AuthRequestHandler.cpp`) for dispatch, `protocol/include/protocol/Message.h`/`MessageType.h` for the new request/result structs, `client/src/game/GameClient.cpp` or `client/src/cli/CliShell.cpp` for the client side — `WebSocketServer`/`WebSocketClient` themselves don't need to change for a new message type |
+| Change how the server binds/accepts WebSocket connections, or add real server push | `server/src/network/WebSocketServer.cpp` (the only file including ixwebsocket's server headers) — see Gaps #11 for why this is the natural next piece of work |
+| Change how the GUI/CLI client connects or sends/receives | `client/src/network/WebSocketClient.cpp` (the only file including ixwebsocket's client headers) |
