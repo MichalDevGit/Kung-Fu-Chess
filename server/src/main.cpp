@@ -62,22 +62,24 @@ int main()
     AuthService authService(users);
     AuthRequestHandler authHandler(authService);
 
-    GameSessionManager sessionManager([](const std::string& json)
+    // Constructed before GameSessionManager (and without a request handler
+    // yet -- see setRequestHandler below) specifically so the broadcast
+    // lambda passed to GameSessionManager can capture a real, already-
+    // existing server to push through, instead of the console-log stub this
+    // used to be.
+    WebSocketServer server(NetworkConfig::DEFAULT_PORT);
+
+    GameSessionManager sessionManager([&server](const std::string& json)
         {
-            // No real per-connection push transport exists yet (see
-            // Phase 3/4 notes) -- broadcasts are logged for now so
-            // server-driven updates (a motion settling, a capture, game
-            // over) are still visible, even though only request/response
-            // messages actually reach a client today.
-            std::cout << "[broadcast] " << json << "\n";
+            server.broadcast(json);
         });
     GameRequestHandler gameHandler(sessionManager);
 
     std::thread tickThread(runTickLoop, std::ref(sessionManager));
     tickThread.detach();
 
-    WebSocketServer server(NetworkConfig::DEFAULT_PORT, [&authHandler, &gameHandler](const std::string& requestJson)
-                            { return dispatch(authHandler, gameHandler, requestJson); });
+    server.setRequestHandler([&authHandler, &gameHandler](const std::string& requestJson)
+                              { return dispatch(authHandler, gameHandler, requestJson); });
 
     std::cout << "KungFuChess server listening on ws://" << NetworkConfig::DEFAULT_HOST
                << ":" << NetworkConfig::DEFAULT_PORT << "\n";

@@ -18,7 +18,7 @@ TEST_CASE("GameSession broadcasts a GameStartedMessage as soon as it's construct
     CHECK(broadcasts[0].find("\"type\":\"game_started\"") != std::string::npos);
 }
 
-TEST_CASE("GameSession broadcasts a GameView snapshot when a move settles, not when it's only requested")
+TEST_CASE("GameSession broadcasts a GameView snapshot on every tick, and again when a move settles, but never from requesting one")
 {
     std::vector<std::string> broadcasts;
 
@@ -35,8 +35,14 @@ TEST_CASE("GameSession broadcasts a GameView snapshot when a move settles, not w
 
     session.tick(1100); // MILLIS_PER_SQUARE (1000) plus margin -- settles the motion
 
-    REQUIRE(broadcasts.size() == 1);
+    // Two broadcasts from this one tick: tick() itself broadcasts
+    // unconditionally every time (this is what keeps an in-flight motion's
+    // glide smooth on a connected client, since MoveExecutedEvent alone only
+    // fires once at the end), plus a second one from MoveExecutedEvent firing
+    // because the motion happened to settle during this same tick.
+    REQUIRE(broadcasts.size() == 2);
     CHECK(broadcasts[0].find("\"type\":\"game_view\"") != std::string::npos);
+    CHECK(broadcasts[1].find("\"type\":\"game_view\"") != std::string::npos);
 }
 
 TEST_CASE("GameSession::getGameView/isGameOver reflect this session's own state")
@@ -73,6 +79,9 @@ TEST_CASE("GameSessionManager::tickAll advances every session's clock")
     session.requestMove(Position(6, 4), Position(5, 4));
     manager.tickAll(1100);
 
-    REQUIRE(broadcasts.size() == 1);
+    // Same reasoning as the GameSession-level test above: one unconditional
+    // per-tick broadcast plus one more from the settling MoveExecutedEvent.
+    REQUIRE(broadcasts.size() == 2);
     CHECK(broadcasts[0].find("\"type\":\"game_view\"") != std::string::npos);
+    CHECK(broadcasts[1].find("\"type\":\"game_view\"") != std::string::npos);
 }

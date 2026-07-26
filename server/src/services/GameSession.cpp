@@ -43,6 +43,12 @@ void GameSession::tick(long long milliseconds)
 {
     std::lock_guard<std::mutex> lock(mutex);
     controller.wait(milliseconds);
+
+    // Broadcast unconditionally, not just on MoveExecutedEvent/PieceCapturedEvent
+    // (which only fire once a motion/jump *finishes*) -- an in-flight motion
+    // needs a fresh view every tick for its client-side glide to look
+    // continuous instead of teleporting from start to end.
+    broadcast(protocol::GameViewMessage{controller.getGameView()}.toJson());
 }
 
 GameView GameSession::getGameView() const
