@@ -21,7 +21,7 @@ std::string GameRequestHandler::handle(const std::string& rawJson) const
         if (type == protocol::MessageType::JoinGame)
         {
             GameSession& session = sessionManager.getOrCreateDefaultSession();
-            return protocol::GameJoinedResult{session.getId()}.toJson();
+            return protocol::GameJoinedResult{session.getId(), session.getGameView()}.toJson();
         }
 
         if (type == protocol::MessageType::Move)

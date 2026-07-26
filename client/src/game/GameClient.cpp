@@ -114,16 +114,26 @@ void GameClient::onMessage(const std::string& json)
             std::lock_guard<std::mutex> lock(mutex);
             latestView = message.view;
         }
+        else if (type == protocol::MessageType::GameJoined)
+        {
+            // Carries the session's current GameView so the board isn't
+            // empty until this client's own first move/jump request
+            // round-trips one back -- see GameJoinedResult in Message.h.
+            protocol::GameJoinedResult message = protocol::GameJoinedResult::fromJson(parsed);
+
+            std::lock_guard<std::mutex> lock(mutex);
+            latestView = message.view;
+        }
         else if (type == protocol::MessageType::GameOver)
         {
             std::lock_guard<std::mutex> lock(mutex);
             gameOver = true;
         }
 
-        // GameJoined/GameStarted/Error: nothing this class tracks yet;
-        // parsing them above already validates the envelope, and any other
-        // unrecognized type is silently ignored rather than treated as
-        // fatal -- a render loop shouldn't crash over one bad frame.
+        // GameStarted/Error: nothing this class tracks yet; parsing them
+        // above already validates the envelope, and any other unrecognized
+        // type is silently ignored rather than treated as fatal -- a render
+        // loop shouldn't crash over one bad frame.
     }
     catch (const nlohmann::json::exception&)
     {

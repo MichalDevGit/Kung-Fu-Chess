@@ -5,6 +5,12 @@
 
 include(FetchContent)
 
+# Disabled: SQLiteCpp's own cpplint.py step rejects the CRLF line endings its
+# vendored sources are checked out with on Windows, breaking the default
+# ALL_BUILD target for reasons that have nothing to do with this project's code.
+set(SQLITECPP_RUN_CPPLINT OFF CACHE BOOL "" FORCE)
+set(SQLITECPP_RUN_CPPCHECK OFF CACHE BOOL "" FORCE)
+
 FetchContent_Declare(
     SQLiteCpp
     GIT_REPOSITORY https://github.com/SRombauts/SQLiteCpp.git

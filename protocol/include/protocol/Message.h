@@ -138,19 +138,28 @@ namespace protocol
         }
     };
 
+    // Carries the just-joined session's current GameView alongside the
+    // sessionId -- join_game is a request/response message like any other, so
+    // this is the only chance the server gets to hand the client an initial
+    // board snapshot; without it the client has no view at all until its own
+    // first move/jump request round-trips one back (and can't even select a
+    // piece to make that first move, since selection is checked against the
+    // last-received view).
     struct GameJoinedResult
     {
         std::string sessionId;
+        GameView view;
 
         std::string toJson() const
         {
             nlohmann::json j{{"type", MessageType::GameJoined}, {"sessionId", sessionId}};
+            j["view"] = view.toJson();
             return j.dump();
         }
 
         static GameJoinedResult fromJson(const nlohmann::json& j)
         {
-            return GameJoinedResult{j.value("sessionId", std::string())};
+            return GameJoinedResult{j.value("sessionId", std::string()), GameView::fromJson(j.at("view"))};
         }
     };
 
