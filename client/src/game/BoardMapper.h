@@ -1,7 +1,7 @@
 #ifndef BOARDMAPPER_H
 #define BOARDMAPPER_H
 
-#include "../../../common/PixelPosition.h"
+#include "PixelPosition.h"
 #include "../../../common/Config/BoardConfig.h"
 #include "../../../common/DTO/PositionView.h"
 

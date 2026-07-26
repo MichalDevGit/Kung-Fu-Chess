@@ -99,7 +99,6 @@ common/                <-- no dependency on server/ or client/
   Config/                  BoardConfig (CELL_SIZE), TimingConfig (move/rest/tick durations),
                            NetworkConfig (host/port) -- plain constexpr, single source of
                            truth for values previously hardcoded/duplicated per file
-  PixelPosition.h          {int x, y}, shared by client UI and server Controller history
   EventBus/                EventBus.h (generic pub/sub) + Events.h (chess event payloads)
   DTO/                     BoardView/PieceView/PositionView/MotionView/JumpView/RestView/
                            GameView -- each with a toJson()/fromJson() pair; each type's
@@ -119,11 +118,12 @@ server: GameSession, GameSessionManager, GameRequestHandler   <-- depends on gam
         ^
 server/src/network (WebSocketServer)   <-- request/response transport, unaware of game/ at all
 
-client/src/ui/*         <-- depends only on common/DTO + common/enums + common/PixelPosition
+client/src/ui/*         <-- depends only on common/DTO + common/enums + client/src/game/PixelPosition
   Img, BoardCanvas, SpriteManager, AnimationFrame, Renderer, GameLoop
         ^ (GameLoop is the one exception: it also holds a GameClient&)
-client/src/game/*       <-- BoardMapper (pixel math) + GameClient (network-backed
-                            Controller& replacement), depends on common/ + protocol/
+client/src/game/*       <-- BoardMapper (pixel math) + PixelPosition ({int x, y}) +
+                            GameClient (network-backed Controller& replacement),
+                            depends on common/ + protocol/
         ^
 client/src/network (WebSocketClient)   <-- request/response transport, unaware of game/ at all
 ```
@@ -277,9 +277,10 @@ ever touches `GameEngine` directly. It holds `GameEngine&`, `hasSelection`,
   `GameSession` serializes into a `protocol::GameViewMessage` to send to a client.
 - `isGameOver() const` → forwards to `gameEngine.getGameState().isGameOver()`.
 
-`PixelPosition` (`common/PixelPosition`) — a plain `{int x, y}` value type, still in
-`common/` so it can theoretically be shared, though in practice only `client/` uses it
-now (`BoardMapper` and `GameLoop`'s mouse-event handling).
+`PixelPosition` (`client/src/game/PixelPosition`) — a plain `{int x, y}` value type.
+Moved out of `common/` since only `client/` ever used it (`BoardMapper` and
+`GameLoop`'s mouse-event handling); it now lives next to `BoardMapper`, its main
+consumer.
 
 ## DTO layer (`common/DTO/`)
 
@@ -348,7 +349,7 @@ compiled symbols linked in, because nothing in that translation unit ever constr
 
 Unchanged from before the split in every respect **except what `GameLoop` talks to**
 (see below) — `Img`, `BoardCanvas`, `SpriteManager`, `AnimationFrame`, `Renderer` all
-still depend only on `common/DTO`/`common/enums`/`common/PixelPosition`, exactly as
+still depend only on `common/DTO`/`common/enums`/`client/src/game/PixelPosition`, exactly as
 before, and none of them know a network is involved. `CoordinateConverter` is still
 unused (`Renderer`/`BoardCanvas` do their own inline pixel math). `BoardCanvas`'s
 constructor `cellSize` argument, `SpriteManager`'s `spriteSize` argument, and

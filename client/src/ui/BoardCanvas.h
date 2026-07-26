@@ -1,6 +1,6 @@
 #pragma once
 #include "img.h"
-#include "../../../common/PixelPosition.h"
+#include "../game/PixelPosition.h"
 #include "../../../common/DTO/PositionView.h"
 #include "../../../common/enums/RestKind.h"
 

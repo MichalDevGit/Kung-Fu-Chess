@@ -6,7 +6,7 @@
 
 #include "BoardMapper.h"
 #include "../network/WebSocketClient.h"
-#include "../../../common/PixelPosition.h"
+#include "PixelPosition.h"
 #include "../../../common/DTO/GameView.h"
 
 // Client-side replacement for holding a Controller& directly: GameLoop calls

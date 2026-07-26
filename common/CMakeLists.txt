@@ -5,8 +5,8 @@
 # instead of duplicating these types or their constants.
 #
 # A real STATIC library, not header-only INTERFACE: several DTOs (BoardView,
-# PieceView, PositionView, MotionView, JumpView, RestView, GameView) and
-# PixelPosition have .cpp implementations, not just declarations.
+# PieceView, PositionView, MotionView, JumpView, RestView, GameView) have
+# .cpp implementations, not just declarations.
 
 file(GLOB_RECURSE COMMON_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 file(GLOB_RECURSE COMMON_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
