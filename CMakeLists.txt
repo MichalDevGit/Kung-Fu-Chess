@@ -28,12 +28,17 @@ list(FILTER LIB_SOURCES EXCLUDE REGEX "src/main.cpp")
 # ---- Game executable ----
 add_executable(${PROJECT_NAME} ${GAME_SOURCES} ${HEADERS})
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# common/ (DTO/enums/EventBus/Config) was promoted out of src/ to a shared top-level
+# library -- link it here too so this (soon-to-retire) local executable keeps building
+# unchanged while common/ is shared prep work for the networked client/server split.
+target_link_libraries(${PROJECT_NAME} KungFuChessCommon)
 
 # ---- Test executable ----
 # Tests reuse the shared logic/UI sources plus their own test files.
 # They include headers relative to src/ (e.g. "tests/doctest.h"), so src is on the include path.
 set(TEST_TARGET ${PROJECT_NAME}_tests)
 add_executable(${TEST_TARGET} ${TEST_SOURCES} ${LIB_SOURCES})
+target_link_libraries(${TEST_TARGET} KungFuChessCommon)
 # Test files include headers two ways: "tests/doctest.h" (relative to src/)
 # and "src/logic/.../X.h" (relative to the project root), so both are on the path.
 target_include_directories(${TEST_TARGET} PRIVATE
@@ -100,6 +105,9 @@ FetchContent_Declare(
     GIT_TAG        v3.12.0
 )
 FetchContent_MakeAvailable(nlohmann_json)
+
+# ---- Shared common library (DTOs/enums/EventBus/config, used by server/ and client/) ----
+add_subdirectory(common)
 
 # ---- Shared protocol (JSON message contract used by server/ and client/) ----
 add_subdirectory(protocol)

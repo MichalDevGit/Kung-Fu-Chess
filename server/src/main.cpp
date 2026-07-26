@@ -8,11 +8,7 @@
 #include "persistence/Database.h"
 #include "persistence/UserRepository.h"
 #include "services/AuthService.h"
-
-namespace
-{
-    constexpr int kPort = 9002;
-}
+#include "common/Config/NetworkConfig.h"
 
 int main()
 {
@@ -22,10 +18,11 @@ int main()
     AuthService authService(users);
     AuthRequestHandler handler(authService);
 
-    WebSocketServer server(kPort, [&handler](const std::string& requestJson)
+    WebSocketServer server(NetworkConfig::DEFAULT_PORT, [&handler](const std::string& requestJson)
                             { return handler.handle(requestJson); });
 
-    std::cout << "KungFuChess server listening on ws://127.0.0.1:" << kPort << "\n";
+    std::cout << "KungFuChess server listening on ws://" << NetworkConfig::DEFAULT_HOST
+               << ":" << NetworkConfig::DEFAULT_PORT << "\n";
     server.start();
     server.wait();
 

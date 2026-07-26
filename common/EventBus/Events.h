@@ -1,7 +1,7 @@
 #ifndef EVENTS_H
 #define EVENTS_H
 
-#include "../../logic/model/Position.h"
+#include "../../src/logic/model/Position.h"
 #include "../enums/PieceColor.h"
 #include "../enums/PieceType.h"
 

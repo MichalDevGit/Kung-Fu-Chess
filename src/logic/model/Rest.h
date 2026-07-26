@@ -1,7 +1,7 @@
 #ifndef REST_H
 #define REST_H
 
-#include "../../common/enums/RestKind.h"
+#include "../../../common/enums/RestKind.h"
 
 class Rest
 {

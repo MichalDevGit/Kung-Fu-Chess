@@ -5,7 +5,7 @@
 
 #include "PieceView.h"
 
-#include "../../logic/model/Board.h"
+#include "../../src/logic/model/Board.h"
 
 
 class BoardView

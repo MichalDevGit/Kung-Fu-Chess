@@ -5,7 +5,8 @@
 #include "UI/GameLoop.h"
 #include "logic/Controller/Controller.h"
 #include "logic/IO/GameFactory.h"
-#include "common/EventBus/Events.h"
+#include "../common/EventBus/Events.h"
+#include "../common/Config/BoardConfig.h"
 #include <iostream>
 
 int main() {
@@ -15,8 +16,8 @@ int main() {
         eventBus.publish(GameStartedEvent{});
         Controller controller(engine);
 
-        BoardCanvas canvas("assets/board_classic.png", 100);
-        SpriteManager spriteManager("assets", "pieces3", 100);
+        BoardCanvas canvas("assets/board_classic.png", BoardConfig::CELL_SIZE);
+        SpriteManager spriteManager("assets", "pieces3", BoardConfig::CELL_SIZE);
         AnimationFrame animationFrame(canvas);
         Renderer renderer(canvas, spriteManager, animationFrame);
 

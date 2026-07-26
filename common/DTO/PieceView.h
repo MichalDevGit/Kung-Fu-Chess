@@ -7,8 +7,8 @@
 #include "../enums/PieceType.h"
 #include "../enums/PieceState.h"
 
-#include "../../logic/model/Position.h"
-#include "../../logic/model/Piece.h"
+#include "../../src/logic/model/Position.h"
+#include "../../src/logic/model/Piece.h"
 
 class PieceView
 {

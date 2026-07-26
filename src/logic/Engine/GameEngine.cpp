@@ -1,6 +1,6 @@
 #include "GameEngine.h"
-#include "../../common/enums/RestKind.h"
-#include "../../common/EventBus/Events.h"
+#include "../../../common/enums/RestKind.h"
+#include "../../../common/EventBus/Events.h"
 
 GameEngine::GameEngine(const GameState& gameState, EventBus& eventBus)
     : gameState(gameState), eventBus(eventBus)

@@ -47,4 +47,4 @@ target_link_libraries(KungFuChessPersistence_tests PRIVATE KungFuChessPersistenc
 
 # ---- Server executable (serves auth over ws://127.0.0.1:9002) ----
 add_executable(KungFuChessServer src/main.cpp)
-target_link_libraries(KungFuChessServer PRIVATE KungFuChessNetwork)
+target_link_libraries(KungFuChessServer PRIVATE KungFuChessNetwork KungFuChessCommon)

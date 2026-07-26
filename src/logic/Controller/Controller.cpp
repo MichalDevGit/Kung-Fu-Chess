@@ -2,10 +2,10 @@
 
 #include <ostream>
 
-#include "../../common/DTO/BoardView.h"
-#include "../../common/DTO/MotionView.h"
-#include "../../common/DTO/JumpView.h"
-#include "../../common/DTO/RestView.h"
+#include "../../../common/DTO/BoardView.h"
+#include "../../../common/DTO/MotionView.h"
+#include "../../../common/DTO/JumpView.h"
+#include "../../../common/DTO/RestView.h"
 #include "../model/Rest.h"
 
 Controller::Controller(GameEngine& gameEngine)

@@ -1,5 +1,5 @@
 #include "SpriteManager.h"
-#include "../common/enums/PieceStateToString.h"
+#include "../../common/enums/PieceStateToString.h"
 #include <fstream>
 
 SpriteManager::SpriteManager(const std::string& assetsPath, const std::string& piecesFolder, int spriteSize)

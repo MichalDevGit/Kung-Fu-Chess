@@ -4,10 +4,10 @@
 #include <map>
 
 #include "img.h"
-#include "../common/DTO/PieceView.h"
-#include "../common/enums/PieceState.h"
-#include "../common/enums/PieceType.h"
-#include "../common/enums/PieceColor.h"
+#include "../../common/DTO/PieceView.h"
+#include "../../common/enums/PieceState.h"
+#include "../../common/enums/PieceType.h"
+#include "../../common/enums/PieceColor.h"
 
 class SpriteManager {
 private:

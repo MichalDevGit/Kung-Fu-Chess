@@ -3,8 +3,8 @@
 
 #include <map>
 
-#include "../../common/DTO/MoveValidation.h"
-#include "../../common/enums/PieceType.h"
+#include "../../../common/DTO/MoveValidation.h"
+#include "../../../common/enums/PieceType.h"
 #include "../model/Board.h"
 #include "../model/Position.h"
 #include "../model/Piece.h"

@@ -7,10 +7,11 @@
 
 #include "cli/CliShell.h"
 #include "network/WebSocketClient.h"
+#include "common/Config/NetworkConfig.h"
 
 int main()
 {
-    const std::string url = "ws://127.0.0.1:9002";
+    const std::string url = std::string("ws://") + NetworkConfig::DEFAULT_HOST + ":" + std::to_string(NetworkConfig::DEFAULT_PORT);
     std::mutex outputMutex;
 
     WebSocketClient client(url, [&outputMutex](const std::string& responseJson)

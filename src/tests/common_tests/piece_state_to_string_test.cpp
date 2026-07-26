@@ -1,6 +1,6 @@
 
 #include "tests/doctest.h"
-#include "src/common/enums/PieceStateToString.h"
+#include "common/enums/PieceStateToString.h"
 
 TEST_CASE("Testing pieceStateToString") {
     SUBCASE("Idle maps to idle") {

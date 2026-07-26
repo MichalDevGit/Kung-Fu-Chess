@@ -1,5 +1,5 @@
 #include "tests/doctest.h"
-#include "src/common/EventBus/EventBus.h"
+#include "common/EventBus/EventBus.h"
 
 #include <atomic>
 #include <thread>

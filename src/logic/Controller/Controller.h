@@ -7,8 +7,8 @@
 #include "../model/Position.h"
 #include "../IO/BoardPrinter.h"
 #include "BoardMapper.h"
-#include "../../common/PixelPosition.h"
-#include "../../common/DTO/GameView.h"
+#include "../../../common/PixelPosition.h"
+#include "../../../common/DTO/GameView.h"
 
 class Controller
 {

@@ -6,10 +6,11 @@
 #include "../model/GameState.h"
 #include "../model/Rest.h"
 #include "../rules/RuleEngine.h"
-#include "../../common/DTO/MoveValidation.h"
+#include "../../../common/DTO/MoveValidation.h"
 #include "../Controller/RealTimeArbiter.h"
-#include "../../common/enums/PieceType.h"
-#include "../../common/EventBus/EventBus.h"
+#include "../../../common/enums/PieceType.h"
+#include "../../../common/EventBus/EventBus.h"
+#include "../../../common/Config/TimingConfig.h"
 
 class GameEngine
 {
@@ -18,9 +19,9 @@ private:
     RuleEngine ruleEngine;
     RealTimeArbiter arbiter;
     EventBus& eventBus;
-    static constexpr long long MILLIS_PER_SQUARE = 1000;
-    static constexpr long long REST_DURATION_MILLIS = 2000;
-    static constexpr long long JUMP_REST_DURATION_MILLIS = 1000;
+    static constexpr long long MILLIS_PER_SQUARE = TimingConfig::MILLIS_PER_SQUARE;
+    static constexpr long long REST_DURATION_MILLIS = TimingConfig::REST_DURATION_MILLIS;
+    static constexpr long long JUMP_REST_DURATION_MILLIS = TimingConfig::JUMP_REST_DURATION_MILLIS;
 
     Board& getBoard();
 

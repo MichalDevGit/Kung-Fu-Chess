@@ -1,6 +1,6 @@
 #include "GameLoop.h"
 
-#include "../common/PixelPosition.h"
+#include "../../common/PixelPosition.h"
 
 #include <opencv2/opencv.hpp>
 #include <chrono>

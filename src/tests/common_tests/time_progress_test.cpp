@@ -1,6 +1,6 @@
 
 #include "tests/doctest.h"
-#include "src/common/TimeProgress.h"
+#include "common/TimeProgress.h"
 
 TEST_CASE("Testing computeProgress") {
     SUBCASE("Before start clamps to 0.0") {

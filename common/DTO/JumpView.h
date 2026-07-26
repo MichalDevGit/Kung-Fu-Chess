@@ -1,28 +1,26 @@
-#ifndef MOTION_VIEW_H
-#define MOTION_VIEW_H
+#ifndef JUMP_VIEW_H
+#define JUMP_VIEW_H
 
 #include "PositionView.h"
 
-#include "../../logic/model/Motion.h"
+#include "../../src/logic/model/Jump.h"
 
-class MotionView
+class JumpView
 {
 private:
     bool active;
-    PositionView from;
-    PositionView to;
+    PositionView position;
     long long startTime;
     long long endTime;
 
 public:
-    MotionView();
+    JumpView();
 
-    MotionView(const Motion& motion);
+    JumpView(const Jump& jump);
 
     bool isActive() const;
 
-    const PositionView& getFrom() const;
-    const PositionView& getTo() const;
+    const PositionView& getPosition() const;
 
     long long getStartTime() const;
     long long getEndTime() const;

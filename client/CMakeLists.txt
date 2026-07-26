@@ -17,4 +17,4 @@ file(GLOB CLI_HEADERS "src/cli/*.h")
 
 add_executable(KungFuChessCliClient src/main.cpp ${CLI_SOURCES} ${CLI_HEADERS})
 target_include_directories(KungFuChessCliClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(KungFuChessCliClient PRIVATE KungFuChessClientNetwork)
+target_link_libraries(KungFuChessCliClient PRIVATE KungFuChessClientNetwork KungFuChessCommon)
