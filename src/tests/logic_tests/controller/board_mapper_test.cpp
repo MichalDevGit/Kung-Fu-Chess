@@ -6,7 +6,7 @@ TEST_CASE("Testing BoardMapper") {
 
     SUBCASE("Pixel to cell conversion") {
         // CELL_SIZE = 100
-        Position pos = mapper.pixelToCell(150, 250); 
+        PositionView pos = mapper.pixelToCell(150, 250);
         CHECK(pos.getRow() == 2);
         CHECK(pos.getCol() == 1);
     }

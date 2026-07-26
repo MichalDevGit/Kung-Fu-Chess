@@ -3,7 +3,7 @@
 
 #include "PositionView.h"
 
-#include "../../src/logic/model/Motion.h"
+#include "../../server/src/game/model/Motion.h"
 
 class MotionView
 {

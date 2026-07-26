@@ -1,0 +1,34 @@
+#ifndef CONTROLLER_H
+#define CONTROLLER_H
+
+#include <iosfwd>
+
+#include "../Engine/GameEngine.h"
+#include "../model/Position.h"
+#include "../IO/BoardPrinter.h"
+#include "../../../../common/DTO/GameView.h"
+
+class Controller
+{
+public:
+    explicit Controller(GameEngine& gameEngine);
+
+    void click(const Position& position);
+    void wait(long long milliseconds);
+    void printBoard(std::ostream& out) const;
+    void jump(const Position& position);
+
+    bool hasSelectedPiece() const;
+    Position getSelectedPosition() const;
+
+    GameView getGameView() const;
+    bool isGameOver() const;
+
+private:
+    GameEngine& gameEngine;
+
+    bool hasSelection;
+    Position selectedPosition;
+};
+
+#endif

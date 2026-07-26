@@ -29,6 +29,17 @@ add_library(KungFuChessAuth STATIC ${AUTH_SOURCES} ${AUTH_HEADERS})
 target_include_directories(KungFuChessAuth PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(KungFuChessAuth PUBLIC KungFuChessPersistence)
 
+# ---- Game engine (authoritative domain logic: model/rules/Engine/Controller/IO) ----
+# Moved here from src/logic/* -- this is now the single source of truth for
+# game rules/state, with the server as its only host (the UI/client never
+# links this directly; it only ever sees serialized GameView JSON).
+file(GLOB_RECURSE GAME_SOURCES "src/game/*.cpp")
+file(GLOB_RECURSE GAME_HEADERS "src/game/*.h")
+
+add_library(KungFuChessGame STATIC ${GAME_SOURCES} ${GAME_HEADERS})
+target_include_directories(KungFuChessGame PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(KungFuChessGame PUBLIC KungFuChessCommon)
+
 # ---- Network layer (request handlers + the WebSocket server wrapper) ----
 file(GLOB NETWORK_SOURCES "src/handlers/*.cpp" "src/network/*.cpp")
 file(GLOB NETWORK_HEADERS "src/handlers/*.h" "src/network/*.h")
@@ -37,13 +48,18 @@ add_library(KungFuChessNetwork STATIC ${NETWORK_SOURCES} ${NETWORK_HEADERS})
 target_include_directories(KungFuChessNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(KungFuChessNetwork PUBLIC KungFuChessAuth KungFuChessProtocol ixwebsocket::ixwebsocket)
 
-# ---- Tests (persistence + auth service; no sockets involved) ----
-file(GLOB PERSISTENCE_TEST_SOURCES "tests/*.cpp")
+# ---- Tests (persistence + auth service + game engine; no sockets involved) ----
+# GLOB_RECURSE so this also picks up tests/game_tests/**/*.cpp (moved from
+# src/tests/logic_tests -- see game/ above). "tests/doctest.h" resolves via
+# ${CMAKE_CURRENT_SOURCE_DIR} below (server/tests/doctest.h, moved from
+# src/tests/doctest.h); "game/X/Y.h" resolves via KungFuChessGame's PUBLIC
+# include dir, same pattern already used for "persistence/..."/"services/...".
+file(GLOB_RECURSE PERSISTENCE_TEST_SOURCES "tests/*.cpp")
 
 add_executable(KungFuChessPersistence_tests ${PERSISTENCE_TEST_SOURCES})
 target_include_directories(KungFuChessPersistence_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(KungFuChessPersistence_tests PRIVATE KungFuChessPersistence KungFuChessAuth)
+    ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(KungFuChessPersistence_tests PRIVATE KungFuChessPersistence KungFuChessAuth KungFuChessGame)
 
 # ---- Server executable (serves auth over ws://127.0.0.1:9002) ----
 add_executable(KungFuChessServer src/main.cpp)

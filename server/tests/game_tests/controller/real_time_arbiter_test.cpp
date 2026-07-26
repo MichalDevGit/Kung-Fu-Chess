@@ -1,0 +1,40 @@
+#include "tests/doctest.h"
+#include "game/Controller/RealTimeArbiter.h"
+
+TEST_CASE("Testing RealTimeArbiter") {
+    RealTimeArbiter arbiter;
+    Position start(0, 0), end(0, 1);
+
+    SUBCASE("Motion timing") {
+        arbiter.startMotion(start, end, 1000);
+        CHECK(arbiter.hasActiveMotion() == true);
+        CHECK(arbiter.shouldFinishCurrentMotion() == false);
+        
+        arbiter.advanceTime(1000);
+        CHECK(arbiter.shouldFinishCurrentMotion() == true);
+        
+        arbiter.finishMotion();
+        CHECK(arbiter.hasActiveMotion() == false);
+    }
+
+    SUBCASE("Rest timing per piece") {
+        arbiter.startRest(1, 1000, RestKind::Long);
+
+        CHECK(arbiter.isPieceResting(1) == true);
+        CHECK(arbiter.isPieceResting(2) == false); // per-piece, not global
+        CHECK(arbiter.getActiveRests().size() == 1);
+        CHECK(arbiter.getActiveRests()[0].getKind() == RestKind::Long);
+
+        arbiter.advanceTime(1000);
+        CHECK(arbiter.isPieceResting(1) == false); // defensive check works even before purge
+
+        arbiter.purgeExpiredRests();
+        CHECK(arbiter.getActiveRests().empty() == true);
+    }
+
+    SUBCASE("Rest kind is preserved for a short (post-jump) rest") {
+        arbiter.startRest(1, 1000, RestKind::Short);
+
+        CHECK(arbiter.getActiveRests()[0].getKind() == RestKind::Short);
+    }
+}

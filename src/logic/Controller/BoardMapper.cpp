@@ -1,13 +1,13 @@
 #include "BoardMapper.h"
 
-Position BoardMapper::pixelToCell(int x, int y) const
+PositionView BoardMapper::pixelToCell(int x, int y) const
 {
-    return Position(
+    return PositionView(
         y / CELL_SIZE,
         x / CELL_SIZE);
 }
 
-Position BoardMapper::pixelToCell(const PixelPosition& pixel) const
+PositionView BoardMapper::pixelToCell(const PixelPosition& pixel) const
 {
     return pixelToCell(pixel.getX(), pixel.getY());
 }

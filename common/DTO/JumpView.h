@@ -3,7 +3,7 @@
 
 #include "PositionView.h"
 
-#include "../../src/logic/model/Jump.h"
+#include "../../server/src/game/model/Jump.h"
 
 class JumpView
 {
