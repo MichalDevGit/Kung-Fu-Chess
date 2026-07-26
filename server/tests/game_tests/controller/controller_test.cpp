@@ -54,4 +54,18 @@ TEST_CASE("Testing Controller interaction") {
         CHECK(controller.getGameView().getSelectedPosition().getRow() == 6);
         CHECK(controller.getGameView().getSelectedPosition().getCol() == 4);
     }
+
+    SUBCASE("move() is a direct from/to command, independent of click()'s selection state") {
+        GameState state(board);
+        EventBus eventBus;
+        GameEngine engine(state, eventBus);
+        Controller controller(engine);
+
+        // No prior click()/selection at all -- move() must still work, and
+        // must not leave any selection state behind either.
+        controller.move(Position(6, 4), Position(5, 4));
+
+        CHECK(controller.hasSelectedPiece() == false);
+        CHECK(engine.hasActiveMotion() == true);
+    }
 }

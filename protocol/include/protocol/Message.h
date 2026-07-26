@@ -5,6 +5,7 @@
 #include <string>
 
 #include "protocol/MessageType.h"
+#include "../../../common/DTO/GameView.h"
 
 // Header-only JSON message envelope shared by the server and every client
 // (the CLI today, a future GUI client later) so both sides speak the exact
@@ -118,6 +119,133 @@ namespace protocol
         static ErrorResult fromJson(const nlohmann::json& j)
         {
             return ErrorResult{j.value("error", std::string())};
+        }
+    };
+
+    // ---- Game session / gameplay messages ----
+
+    struct JoinGameRequest
+    {
+        std::string toJson() const
+        {
+            nlohmann::json j{{"type", MessageType::JoinGame}};
+            return j.dump();
+        }
+
+        static JoinGameRequest fromJson(const nlohmann::json&)
+        {
+            return JoinGameRequest{};
+        }
+    };
+
+    struct GameJoinedResult
+    {
+        std::string sessionId;
+
+        std::string toJson() const
+        {
+            nlohmann::json j{{"type", MessageType::GameJoined}, {"sessionId", sessionId}};
+            return j.dump();
+        }
+
+        static GameJoinedResult fromJson(const nlohmann::json& j)
+        {
+            return GameJoinedResult{j.value("sessionId", std::string())};
+        }
+    };
+
+    struct MoveRequest
+    {
+        int fromRow = 0;
+        int fromCol = 0;
+        int toRow = 0;
+        int toCol = 0;
+
+        std::string toJson() const
+        {
+            nlohmann::json j{
+                {"type", MessageType::Move},
+                {"fromRow", fromRow},
+                {"fromCol", fromCol},
+                {"toRow", toRow},
+                {"toCol", toCol}};
+            return j.dump();
+        }
+
+        static MoveRequest fromJson(const nlohmann::json& j)
+        {
+            return MoveRequest{
+                j.at("fromRow").get<int>(),
+                j.at("fromCol").get<int>(),
+                j.at("toRow").get<int>(),
+                j.at("toCol").get<int>()};
+        }
+    };
+
+    struct JumpRequest
+    {
+        int row = 0;
+        int col = 0;
+
+        std::string toJson() const
+        {
+            nlohmann::json j{{"type", MessageType::Jump}, {"row", row}, {"col", col}};
+            return j.dump();
+        }
+
+        static JumpRequest fromJson(const nlohmann::json& j)
+        {
+            return JumpRequest{j.at("row").get<int>(), j.at("col").get<int>()};
+        }
+    };
+
+    // Wraps the common::GameView per-frame snapshot DTO -- the server pushes
+    // one of these to every connection subscribed to a GameSession whenever
+    // an EventBus event fires (see GameSession, added in a later phase).
+    struct GameViewMessage
+    {
+        GameView view;
+
+        std::string toJson() const
+        {
+            nlohmann::json j{{"type", MessageType::GameView}};
+            j["view"] = view.toJson();
+            return j.dump();
+        }
+
+        static GameViewMessage fromJson(const nlohmann::json& j)
+        {
+            return GameViewMessage{GameView::fromJson(j.at("view"))};
+        }
+    };
+
+    // Thin wrappers mirroring common::GameStartedEvent/GameOverEvent -- both
+    // are empty payloads, so only the "type" tag carries information.
+    struct GameStartedMessage
+    {
+        std::string toJson() const
+        {
+            nlohmann::json j{{"type", MessageType::GameStarted}};
+            return j.dump();
+        }
+
+        static GameStartedMessage fromJson(const nlohmann::json&)
+        {
+            return GameStartedMessage{};
+        }
+    };
+
+    struct GameOverMessage
+    {
+        std::string toJson() const
+        {
+            nlohmann::json j{{"type", MessageType::GameOver}};
+            return j.dump();
+        }
+
+        static GameOverMessage fromJson(const nlohmann::json&)
+        {
+            return GameOverMessage{};
         }
     };
 

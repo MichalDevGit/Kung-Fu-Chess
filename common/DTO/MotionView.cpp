@@ -10,15 +10,6 @@ MotionView::MotionView()
 {
 }
 
-MotionView::MotionView(const Motion& motion)
-    : active(motion.isActive()),
-      from(motion.getFrom()),
-      to(motion.getTo()),
-      startTime(motion.getStartTime()),
-      endTime(motion.getEndTime())
-{
-}
-
 bool MotionView::isActive() const
 {
     return active;
@@ -44,7 +35,40 @@ long long MotionView::getEndTime() const
     return endTime;
 }
 
+MotionView::MotionView(bool active,
+                        const PositionView& from,
+                        const PositionView& to,
+                        long long startTime,
+                        long long endTime)
+    : active(active),
+      from(from),
+      to(to),
+      startTime(startTime),
+      endTime(endTime)
+{
+}
+
 double MotionView::getProgress(long long currentTime) const
 {
     return computeProgress(startTime, endTime, currentTime);
+}
+
+nlohmann::json MotionView::toJson() const
+{
+    return nlohmann::json{
+        {"active", active},
+        {"from", from.toJson()},
+        {"to", to.toJson()},
+        {"startTime", startTime},
+        {"endTime", endTime}};
+}
+
+MotionView MotionView::fromJson(const nlohmann::json& j)
+{
+    return MotionView(
+        j.at("active").get<bool>(),
+        PositionView::fromJson(j.at("from")),
+        PositionView::fromJson(j.at("to")),
+        j.at("startTime").get<long long>(),
+        j.at("endTime").get<long long>());
 }

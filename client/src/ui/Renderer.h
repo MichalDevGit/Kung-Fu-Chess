@@ -2,7 +2,7 @@
 #include "BoardCanvas.h"
 #include "SpriteManager.h"
 #include "AnimationFrame.h"
-#include "../../common/DTO/GameView.h"
+#include "../../../common/DTO/GameView.h"
 
 class Renderer {
 private:

@@ -1,6 +1,8 @@
 #ifndef POSITION_VIEW_H
 #define POSITION_VIEW_H
 
+#include <nlohmann/json.hpp>
+
 #include "../../server/src/game/model/Position.h"
 
 class PositionView
@@ -16,6 +18,9 @@ public:
 
     int getRow() const;
     int getCol() const;
+
+    nlohmann::json toJson() const;
+    static PositionView fromJson(const nlohmann::json& j);
 };
 
 #endif

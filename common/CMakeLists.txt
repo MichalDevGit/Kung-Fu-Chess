@@ -13,3 +13,7 @@ file(GLOB_RECURSE COMMON_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
 
 add_library(KungFuChessCommon STATIC ${COMMON_SOURCES} ${COMMON_HEADERS})
 target_include_directories(KungFuChessCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+# The DTOs' toJson()/fromJson() pairs (see common/DTO/*, common/enums/EnumJson.h)
+# are what protocol/'s game messages serialize -- nlohmann_json is fetched once
+# at the root, before add_subdirectory(common).
+target_link_libraries(KungFuChessCommon PUBLIC nlohmann_json::nlohmann_json)

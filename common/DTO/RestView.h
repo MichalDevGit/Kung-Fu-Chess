@@ -1,6 +1,8 @@
 #ifndef REST_VIEW_H
 #define REST_VIEW_H
 
+#include <nlohmann/json.hpp>
+
 #include "PositionView.h"
 #include "../enums/RestKind.h"
 
@@ -32,6 +34,9 @@ public:
     RestKind getKind() const;
 
     double getProgress(long long currentTime) const;
+
+    nlohmann::json toJson() const;
+    static RestView fromJson(const nlohmann::json& j);
 };
 
 #endif

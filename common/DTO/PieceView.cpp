@@ -1,5 +1,7 @@
 #include "PieceView.h"
 
+#include "../enums/EnumJson.h"
+
 PieceView::PieceView()
     : id(-1),
       type(PieceType::Empty),
@@ -19,15 +21,6 @@ PieceView::PieceView(int id,
       color(color),
       state(state),
       position(position)
-{
-}
-
-PieceView::PieceView(const Piece& piece)
-    : id(piece.getId()),
-      type(piece.getType()),
-      color(piece.getColor()),
-      state(piece.getState()),
-      position(piece.getPosition())
 {
 }
 
@@ -101,4 +94,24 @@ std::string PieceView::toString() const
     }
 
     return result;
+}
+
+nlohmann::json PieceView::toJson() const
+{
+    return nlohmann::json{
+        {"id", id},
+        {"type", type},
+        {"color", color},
+        {"state", state},
+        {"position", position.toJson()}};
+}
+
+PieceView PieceView::fromJson(const nlohmann::json& j)
+{
+    return PieceView(
+        j.at("id").get<int>(),
+        j.at("type").get<PieceType>(),
+        j.at("color").get<PieceColor>(),
+        j.at("state").get<PieceState>(),
+        PositionView::fromJson(j.at("position")));
 }

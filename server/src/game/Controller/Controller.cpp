@@ -72,6 +72,11 @@ void Controller::jump(const Position& position)
     gameEngine.requestJump(position);
 }
 
+void Controller::move(const Position& from, const Position& to)
+{
+    gameEngine.requestMove(from, to);
+}
+
 bool Controller::hasSelectedPiece() const
 {
     return hasSelection;

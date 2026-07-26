@@ -22,8 +22,8 @@ target_include_directories(KungFuChessPersistence PUBLIC ${CMAKE_CURRENT_SOURCE_
 target_link_libraries(KungFuChessPersistence PUBLIC SQLiteCpp)
 
 # ---- Auth service (DB-backed business logic; no networking types) ----
-file(GLOB AUTH_SOURCES "src/services/*.cpp")
-file(GLOB AUTH_HEADERS "src/services/*.h")
+file(GLOB AUTH_SOURCES "src/services/AuthService.cpp")
+file(GLOB AUTH_HEADERS "src/services/AuthService.h")
 
 add_library(KungFuChessAuth STATIC ${AUTH_SOURCES} ${AUTH_HEADERS})
 target_include_directories(KungFuChessAuth PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -40,13 +40,25 @@ add_library(KungFuChessGame STATIC ${GAME_SOURCES} ${GAME_HEADERS})
 target_include_directories(KungFuChessGame PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(KungFuChessGame PUBLIC KungFuChessCommon)
 
+# ---- Game session service (hosts one authoritative GameEngine/Controller
+# per session, bridges its EventBus events to protocol/ messages) ----
+# Kept as its own target, separate from KungFuChessAuth, even though both
+# live under src/services/ -- a library named "Auth" building GameSession
+# would be a misleading name for what it actually contains.
+file(GLOB GAME_SESSION_SOURCES "src/services/GameSession.cpp" "src/services/GameSessionManager.cpp")
+file(GLOB GAME_SESSION_HEADERS "src/services/GameSession.h" "src/services/GameSessionManager.h")
+
+add_library(KungFuChessGameSession STATIC ${GAME_SESSION_SOURCES} ${GAME_SESSION_HEADERS})
+target_include_directories(KungFuChessGameSession PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(KungFuChessGameSession PUBLIC KungFuChessGame KungFuChessProtocol)
+
 # ---- Network layer (request handlers + the WebSocket server wrapper) ----
 file(GLOB NETWORK_SOURCES "src/handlers/*.cpp" "src/network/*.cpp")
 file(GLOB NETWORK_HEADERS "src/handlers/*.h" "src/network/*.h")
 
 add_library(KungFuChessNetwork STATIC ${NETWORK_SOURCES} ${NETWORK_HEADERS})
 target_include_directories(KungFuChessNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(KungFuChessNetwork PUBLIC KungFuChessAuth KungFuChessProtocol ixwebsocket::ixwebsocket)
+target_link_libraries(KungFuChessNetwork PUBLIC KungFuChessAuth KungFuChessGameSession KungFuChessProtocol ixwebsocket::ixwebsocket)
 
 # ---- Tests (persistence + auth service + game engine; no sockets involved) ----
 # GLOB_RECURSE so this also picks up tests/game_tests/**/*.cpp (moved from
@@ -59,7 +71,7 @@ file(GLOB_RECURSE PERSISTENCE_TEST_SOURCES "tests/*.cpp")
 add_executable(KungFuChessPersistence_tests ${PERSISTENCE_TEST_SOURCES})
 target_include_directories(KungFuChessPersistence_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(KungFuChessPersistence_tests PRIVATE KungFuChessPersistence KungFuChessAuth KungFuChessGame)
+target_link_libraries(KungFuChessPersistence_tests PRIVATE KungFuChessPersistence KungFuChessAuth KungFuChessGame KungFuChessGameSession KungFuChessNetwork)
 
 # ---- Server executable (serves auth over ws://127.0.0.1:9002) ----
 add_executable(KungFuChessServer src/main.cpp)

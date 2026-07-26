@@ -54,6 +54,11 @@ WebSocketClient::~WebSocketClient()
     ix::uninitNetSystem();
 }
 
+void WebSocketClient::setOnMessage(MessageHandler onMessage)
+{
+    impl->onMessage = std::move(onMessage);
+}
+
 void WebSocketClient::start()
 {
     impl->webSocket.start();

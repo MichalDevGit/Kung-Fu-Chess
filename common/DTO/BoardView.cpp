@@ -15,30 +15,6 @@ BoardView::BoardView(int rows,
 {
 }
 
-BoardView::BoardView(const Board& board)
-    : rows(board.getRows()),
-      cols(board.getCols())
-{
-    for (int row = 0; row < rows; ++row)
-    {
-        for (int col = 0; col < cols; ++col)
-        {
-            const Piece* piece = board.getPiece(Position(row, col));
-
-            if (piece != nullptr)
-            {
-                pieces.emplace_back(*piece);
-            }
-            else
-            {
-                pieces.emplace_back(
-                    PieceView(-1, PieceType::Empty, PieceColor::None,
-                              PieceState::Idle, PositionView(row, col)));
-            }
-        }
-    }
-}
-
 int BoardView::getRows() const
 {
     return rows;
@@ -63,5 +39,29 @@ PieceView BoardView::getPiece(int row, int col) const
         return pieces[index];
     }
 
-    return PieceView(); 
+    return PieceView();
+}
+
+nlohmann::json BoardView::toJson() const
+{
+    nlohmann::json piecesJson = nlohmann::json::array();
+
+    for (const PieceView& piece : pieces)
+    {
+        piecesJson.push_back(piece.toJson());
+    }
+
+    return nlohmann::json{{"rows", rows}, {"cols", cols}, {"pieces", piecesJson}};
+}
+
+BoardView BoardView::fromJson(const nlohmann::json& j)
+{
+    std::vector<PieceView> pieces;
+
+    for (const auto& pieceJson : j.at("pieces"))
+    {
+        pieces.push_back(PieceView::fromJson(pieceJson));
+    }
+
+    return BoardView(j.at("rows").get<int>(), j.at("cols").get<int>(), pieces);
 }

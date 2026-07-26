@@ -1,8 +1,8 @@
 #pragma once
 #include "img.h"
-#include "../../common/PixelPosition.h"
-#include "../../common/DTO/PositionView.h"
-#include "../../common/enums/RestKind.h"
+#include "../../../common/PixelPosition.h"
+#include "../../../common/DTO/PositionView.h"
+#include "../../../common/enums/RestKind.h"
 
 class BoardCanvas {
 private:

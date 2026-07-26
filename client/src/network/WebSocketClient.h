@@ -24,6 +24,13 @@ public:
     WebSocketClient(const WebSocketClient&) = delete;
     WebSocketClient& operator=(const WebSocketClient&) = delete;
 
+    // Replaces the message handler after construction. Exists so a
+    // higher-level owner (e.g. GameClient) constructed *after* this
+    // WebSocketClient can still register itself as the message recipient,
+    // without needing this class's constructor to somehow already know
+    // about an object that doesn't exist yet.
+    void setOnMessage(MessageHandler onMessage);
+
     // Starts connecting in the background (and auto-reconnects on drop).
     void start();
 

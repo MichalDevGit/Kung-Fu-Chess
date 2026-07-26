@@ -1,9 +1,9 @@
 #ifndef COORDINATE_CONVERTER_H
 #define COORDINATE_CONVERTER_H
 
-#include "../../common/DTO/PositionView.h"
-#include "../../common/PixelPosition.h"
-#include "../../common/Config/BoardConfig.h"
+#include "../../../common/DTO/PositionView.h"
+#include "../../../common/PixelPosition.h"
+#include "../../../common/Config/BoardConfig.h"
 
 class CoordinateConverter
 {

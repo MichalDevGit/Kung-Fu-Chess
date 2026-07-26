@@ -1,5 +1,6 @@
 #include "RestView.h"
 #include "../TimeProgress.h"
+#include "../enums/EnumJson.h"
 
 RestView::RestView()
     : pieceId(-1),
@@ -51,4 +52,24 @@ RestKind RestView::getKind() const
 double RestView::getProgress(long long currentTime) const
 {
     return computeProgress(startTime, endTime, currentTime);
+}
+
+nlohmann::json RestView::toJson() const
+{
+    return nlohmann::json{
+        {"pieceId", pieceId},
+        {"position", position.toJson()},
+        {"startTime", startTime},
+        {"endTime", endTime},
+        {"kind", kind}};
+}
+
+RestView RestView::fromJson(const nlohmann::json& j)
+{
+    return RestView(
+        j.at("pieceId").get<int>(),
+        PositionView::fromJson(j.at("position")),
+        j.at("startTime").get<long long>(),
+        j.at("endTime").get<long long>(),
+        j.at("kind").get<RestKind>());
 }

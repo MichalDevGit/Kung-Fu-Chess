@@ -3,6 +3,8 @@
 
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "BoardView.h"
 #include "MotionView.h"
 #include "JumpView.h"
@@ -38,6 +40,9 @@ public:
     bool getHasSelection() const;
     const PositionView& getSelectedPosition() const;
     long long getCurrentTime() const;
+
+    nlohmann::json toJson() const;
+    static GameView fromJson(const nlohmann::json& j);
 };
 
 #endif

@@ -3,6 +3,8 @@
 
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "PieceView.h"
 
 #include "../../server/src/game/model/Board.h"
@@ -31,6 +33,9 @@ public:
     const std::vector<PieceView>& getPieces() const;
 
     PieceView getPiece(int row, int col) const;
+
+    nlohmann::json toJson() const;
+    static BoardView fromJson(const nlohmann::json& j);
 };
 
 #endif

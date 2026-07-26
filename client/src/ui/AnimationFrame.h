@@ -1,8 +1,8 @@
 #pragma once
 #include "BoardCanvas.h"
-#include "../../common/DTO/GameView.h"
-#include "../../common/PixelPosition.h"
-#include "../../common/enums/PieceState.h"
+#include "../../../common/DTO/GameView.h"
+#include "../../../common/PixelPosition.h"
+#include "../../../common/enums/PieceState.h"
 
 class AnimationFrame {
 private:

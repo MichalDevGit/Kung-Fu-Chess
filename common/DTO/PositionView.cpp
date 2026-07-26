@@ -13,12 +13,6 @@ PositionView::PositionView(int row,
 {
 }
 
-PositionView::PositionView(const Position& position)
-    : row(position.getRow()),
-      col(position.getCol())
-{
-}
-
 int PositionView::getRow() const
 {
     return row;
@@ -27,5 +21,15 @@ int PositionView::getRow() const
 int PositionView::getCol() const
 {
     return col;
+}
+
+nlohmann::json PositionView::toJson() const
+{
+    return nlohmann::json{{"row", row}, {"col", col}};
+}
+
+PositionView PositionView::fromJson(const nlohmann::json& j)
+{
+    return PositionView(j.at("row").get<int>(), j.at("col").get<int>());
 }
 

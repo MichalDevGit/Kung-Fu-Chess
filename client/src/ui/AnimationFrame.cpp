@@ -1,5 +1,5 @@
 #include "AnimationFrame.h"
-#include "../../common/enums/RestKind.h"
+#include "../../../common/enums/RestKind.h"
 
 #include <algorithm>
 

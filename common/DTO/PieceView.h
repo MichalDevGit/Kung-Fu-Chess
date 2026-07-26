@@ -1,6 +1,8 @@
 #ifndef PIECE_VIEW_H
 #define PIECE_VIEW_H
 
+#include <nlohmann/json.hpp>
+
 #include "PositionView.h"
 
 #include "../enums/PieceColor.h"
@@ -42,6 +44,9 @@ public:
     std::string toString() const;
 
     const PositionView& getPosition() const;
+
+    nlohmann::json toJson() const;
+    static PieceView fromJson(const nlohmann::json& j);
 };
 
 #endif

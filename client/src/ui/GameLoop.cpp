@@ -1,17 +1,16 @@
 #include "GameLoop.h"
 
-#include "../../common/PixelPosition.h"
+#include "../../../common/PixelPosition.h"
 
 #include <opencv2/opencv.hpp>
-#include <chrono>
 
 namespace
 {
 constexpr int ESCAPE_KEY = 27;
 }
 
-GameLoop::GameLoop(Controller& controller, Renderer& renderer, BoardCanvas& canvas)
-    : controller(controller),
+GameLoop::GameLoop(GameClient& gameClient, Renderer& renderer, BoardCanvas& canvas)
+    : gameClient(gameClient),
       renderer(renderer),
       canvas(canvas)
 {
@@ -22,22 +21,11 @@ void GameLoop::run()
     cv::namedWindow(canvas.getWindowName(), cv::WINDOW_NORMAL);
     cv::setMouseCallback(canvas.getWindowName(), &GameLoop::mouseCallback, this);
 
-    auto lastTick = std::chrono::steady_clock::now();
-
     while (true)
     {
-        auto now = std::chrono::steady_clock::now();
+        renderer.render(gameClient.getGameView());
 
-        long long deltaMs =
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTick).count();
-
-        lastTick = now;
-
-        controller.wait(deltaMs);
-
-        renderer.render(controller.getGameView());
-
-        if (controller.isGameOver())
+        if (gameClient.isGameOver())
         {
             renderer.renderGameOver();
         }
@@ -69,10 +57,10 @@ void GameLoop::mouseCallback(int event, int x, int y, int flags, void* userdata)
 
 void GameLoop::onMouseDown(int x, int y)
 {
-    controller.handlePixelClick(PixelPosition(x, y));
+    gameClient.handlePixelClick(PixelPosition(x, y));
 }
 
 void GameLoop::onMouseRightDown(int x, int y)
 {
-    controller.handlePixelJump(PixelPosition(x, y));
+    gameClient.handlePixelJump(PixelPosition(x, y));
 }

@@ -57,3 +57,41 @@ long long GameView::getCurrentTime() const
 {
     return currentTime;
 }
+
+nlohmann::json GameView::toJson() const
+{
+    nlohmann::json restsJson = nlohmann::json::array();
+
+    for (const RestView& rest : rests)
+    {
+        restsJson.push_back(rest.toJson());
+    }
+
+    return nlohmann::json{
+        {"board", board.toJson()},
+        {"motion", motion.toJson()},
+        {"jump", jump.toJson()},
+        {"rests", restsJson},
+        {"hasSelection", hasSelection},
+        {"selectedPosition", selectedPosition.toJson()},
+        {"currentTime", currentTime}};
+}
+
+GameView GameView::fromJson(const nlohmann::json& j)
+{
+    std::vector<RestView> rests;
+
+    for (const auto& restJson : j.at("rests"))
+    {
+        rests.push_back(RestView::fromJson(restJson));
+    }
+
+    return GameView(
+        BoardView::fromJson(j.at("board")),
+        MotionView::fromJson(j.at("motion")),
+        JumpView::fromJson(j.at("jump")),
+        rests,
+        j.at("hasSelection").get<bool>(),
+        PositionView::fromJson(j.at("selectedPosition")),
+        j.at("currentTime").get<long long>());
+}

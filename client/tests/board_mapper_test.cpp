@@ -1,5 +1,5 @@
 #include "tests/doctest.h"
-#include "src/logic/Controller/BoardMapper.h"
+#include "game/BoardMapper.h"
 
 TEST_CASE("Testing BoardMapper") {
     BoardMapper mapper;
