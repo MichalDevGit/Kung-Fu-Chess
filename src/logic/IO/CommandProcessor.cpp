@@ -38,7 +38,8 @@ void CommandProcessor::run()
 
         GameState gameState(board);
 
-        GameEngine engine(gameState);
+        EventBus eventBus;
+        GameEngine engine(gameState, eventBus);
 
         Controller controller(engine);
 

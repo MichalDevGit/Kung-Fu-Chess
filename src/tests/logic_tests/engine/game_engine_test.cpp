@@ -12,7 +12,8 @@ TEST_CASE("Testing GameEngine flow") {
 
     SUBCASE("Requesting a valid move") {
         GameState state(board);
-        GameEngine engine(state);
+        EventBus eventBus;
+        GameEngine engine(state, eventBus);
 
         MoveValidation result = engine.requestMove(Position(6, 4), Position(5, 4));
         CHECK(result.isValid == true);
@@ -21,7 +22,8 @@ TEST_CASE("Testing GameEngine flow") {
 
     SUBCASE("Advancing time and finishing motion") {
         GameState state(board);
-        GameEngine engine(state);
+        EventBus eventBus;
+        GameEngine engine(state, eventBus);
 
         engine.requestMove(Position(6, 4), Position(5, 4));
 
@@ -40,7 +42,8 @@ TEST_CASE("Testing GameEngine flow") {
         board.addPiece(king);
 
         GameState state(board);
-        GameEngine engine(state);
+        EventBus eventBus;
+        GameEngine engine(state, eventBus);
 
         engine.requestMove(Position(6, 4), Position(5, 3));
         engine.advanceTime(1500);
@@ -54,7 +57,8 @@ TEST_CASE("Testing GameEngine flow") {
         board.addPiece(pawn);
 
         GameState state(board);
-        GameEngine engine(state);
+        EventBus eventBus;
+        GameEngine engine(state, eventBus);
 
         engine.requestMove(Position(1, 4), Position(0, 4));
         engine.advanceTime(1500);
@@ -65,7 +69,8 @@ TEST_CASE("Testing GameEngine flow") {
 
     SUBCASE("Piece rests after completing a move") {
         GameState state(board);
-        GameEngine engine(state);
+        EventBus eventBus;
+        GameEngine engine(state, eventBus);
 
         engine.requestMove(Position(6, 4), Position(5, 4));
         engine.advanceTime(1500);
@@ -90,7 +95,8 @@ TEST_CASE("Testing GameEngine flow") {
         board.addPiece(defender);
 
         GameState state(board);
-        GameEngine engine(state);
+        EventBus eventBus;
+        GameEngine engine(state, eventBus);
 
         engine.requestJump(Position(5, 3));
 
@@ -116,7 +122,8 @@ TEST_CASE("Testing GameEngine flow") {
 
     SUBCASE("Piece rests briefly after a jump expires without being triggered") {
         GameState state(board);
-        GameEngine engine(state);
+        EventBus eventBus;
+        GameEngine engine(state, eventBus);
 
         engine.requestJump(Position(6, 4));
         engine.advanceTime(1000);

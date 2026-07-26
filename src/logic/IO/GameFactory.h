@@ -7,7 +7,7 @@
 class GameFactory
 {
 public:
-    static GameEngine createNewGame();
+    static GameEngine createNewGame(EventBus& eventBus);
 
 private:
     static Board createClassicBoard();

@@ -5,11 +5,14 @@
 #include "UI/GameLoop.h"
 #include "logic/Controller/Controller.h"
 #include "logic/IO/GameFactory.h"
+#include "common/EventBus/Events.h"
 #include <iostream>
 
 int main() {
     try {
-        GameEngine engine = GameFactory::createNewGame();
+        EventBus eventBus;
+        GameEngine engine = GameFactory::createNewGame(eventBus);
+        eventBus.publish(GameStartedEvent{});
         Controller controller(engine);
 
         BoardCanvas canvas("assets/board_classic.png", 100);

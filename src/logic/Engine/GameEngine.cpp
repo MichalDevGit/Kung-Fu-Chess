@@ -1,8 +1,9 @@
 #include "GameEngine.h"
 #include "../../common/enums/RestKind.h"
+#include "../../common/EventBus/Events.h"
 
-GameEngine::GameEngine(const GameState& gameState)
-    : gameState(gameState)
+GameEngine::GameEngine(const GameState& gameState, EventBus& eventBus)
+    : gameState(gameState), eventBus(eventBus)
 {
 }
 
@@ -121,11 +122,19 @@ void GameEngine::executeMove(const Motion& motion)
             {
                 int jumpingPieceId = jumpingPiece->getId();
 
+                PieceCapturedEvent capturedEvent{
+                    movingPiece->getId(),
+                    movingPiece->getColor(),
+                    movingPiece->getType(),
+                    movingPiece->getPosition()};
+
                 getBoard().removePiece(motion.getFrom());
 
                 arbiter.finishJump();
 
                 arbiter.startRest(jumpingPieceId, JUMP_REST_DURATION_MILLIS, RestKind::Short);
+
+                eventBus.publish(capturedEvent);
 
                 return;
             }
@@ -141,7 +150,15 @@ void GameEngine::executeMove(const Motion& motion)
 
     if (destinationPiece != nullptr)
     {
+        PieceCapturedEvent capturedEvent{
+            destinationPiece->getId(),
+            destinationPiece->getColor(),
+            destinationPiece->getType(),
+            destinationPiece->getPosition()};
+
         getBoard().removePiece(motion.getTo());
+
+        eventBus.publish(capturedEvent);
     }
 
     getBoard().movePiece(
@@ -151,6 +168,8 @@ void GameEngine::executeMove(const Motion& motion)
     if (kingCaptured)
     {
         gameState.setGameOver(true);
+
+        eventBus.publish(GameOverEvent{});
     }
 
     Piece* movedPiece =
@@ -273,6 +292,8 @@ void GameEngine::settleCompletedMotions()
         if (moverAfter != nullptr && moverAfter->getPosition() == motion.getTo())
         {
             arbiter.startRest(moverId, REST_DURATION_MILLIS, RestKind::Long);
+
+            eventBus.publish(MoveExecutedEvent{moverId, motion.getFrom(), motion.getTo()});
         }
     }
 }

@@ -11,7 +11,8 @@ TEST_CASE("Testing Controller interaction") {
 
     SUBCASE("Selecting and moving") {
         GameState state(board);
-        GameEngine engine(state);
+        EventBus eventBus;
+        GameEngine engine(state, eventBus);
         Controller controller(engine);
 
         // בחירת כלי
@@ -29,7 +30,8 @@ TEST_CASE("Testing Controller interaction") {
         board.addPiece(p2);
 
         GameState state(board);
-        GameEngine engine(state);
+        EventBus eventBus;
+        GameEngine engine(state, eventBus);
         Controller controller(engine);
 
         controller.click(Position(6, 4)); // בחרתי את הראשון
@@ -40,7 +42,8 @@ TEST_CASE("Testing Controller interaction") {
 
     SUBCASE("getGameView reflects selection state") {
         GameState state(board);
-        GameEngine engine(state);
+        EventBus eventBus;
+        GameEngine engine(state, eventBus);
         Controller controller(engine);
 
         CHECK(controller.getGameView().getHasSelection() == false);

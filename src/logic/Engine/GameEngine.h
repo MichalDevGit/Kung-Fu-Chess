@@ -9,6 +9,7 @@
 #include "../../common/DTO/MoveValidation.h"
 #include "../Controller/RealTimeArbiter.h"
 #include "../../common/enums/PieceType.h"
+#include "../../common/EventBus/EventBus.h"
 
 class GameEngine
 {
@@ -16,6 +17,7 @@ private:
     GameState gameState;
     RuleEngine ruleEngine;
     RealTimeArbiter arbiter;
+    EventBus& eventBus;
     static constexpr long long MILLIS_PER_SQUARE = 1000;
     static constexpr long long REST_DURATION_MILLIS = 2000;
     static constexpr long long JUMP_REST_DURATION_MILLIS = 1000;
@@ -36,7 +38,7 @@ private:
         const Position& to) const;
 
 public:
-    GameEngine(const GameState& gameState);
+    GameEngine(const GameState& gameState, EventBus& eventBus);
 
     void advanceTime(long long milliseconds);
 

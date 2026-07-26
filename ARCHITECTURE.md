@@ -6,16 +6,26 @@ eventually look. Read this before exploring the source tree — it should make a
 re-read of `src/` unnecessary for most tasks. If you change the architecture in a way
 that makes a section below wrong, update that section in the same change.
 
-Last reviewed: 2026-07-21, against the source tree as of commit `64e6d30`, updated to
-reflect: the first networking slice on top of `server/`'s persistence layer, plus a new
-top-level `client/` directory and a new top-level `protocol/` directory. `server/` now
-runs a real `ws://127.0.0.1:9002` WebSocket server (via `ixwebsocket`) that handles
-`register`/`login` requests, backed by the existing `UserRepository`; `client/` is a
-standalone CLI executable (a text-based stand-in for the future GUI client) that talks
-to it. There are still no rooms/sessions/game commands over the wire — see "Server /
-persistence / networking layer" below for exactly what does and doesn't exist yet.
+Last reviewed: 2026-07-26, against the source tree as of commit `557112d`, updated to
+reflect: a new in-process publish/subscribe `EventBus` (`src/common/EventBus/`) — a
+generic, thread-safe, type-safe bus (routing keyed by each event struct's own C++ type,
+not an enum) that `GameEngine` now takes by reference and publishes to at the exact
+points certain state transitions already happened (`MoveExecutedEvent`,
+`PieceCapturedEvent`, `GameOverEvent`), plus a one-off `GameStartedEvent` published from
+`main.cpp` right after engine construction. It exists to decouple `GameEngine` from
+several planned-but-not-yet-built features (score persistence, move logging, sound
+effects, start/end animations) that will eventually subscribe to it — see "Event bus"
+below for the full design and exactly which events fire where; **nothing subscribes to
+it yet**, so this change has no visible effect on current gameplay.
 
-Earlier updates reflect: per-piece post-move `Rest` in `RealTimeArbiter`/`GameEngine`; the new
+Earlier updates reflect: the first networking slice on top of `server/`'s persistence
+layer, plus a new top-level `client/` directory and a new top-level `protocol/`
+directory. `server/` now runs a real `ws://127.0.0.1:9002` WebSocket server (via
+`ixwebsocket`) that handles `register`/`login` requests, backed by the existing
+`UserRepository`; `client/` is a standalone CLI executable (a text-based stand-in for
+the future GUI client) that talks to it. There are still no rooms/sessions/game
+commands over the wire — see "Server / persistence / networking layer" below for
+exactly what does and doesn't exist yet. Also earlier: per-piece post-move `Rest` in `RealTimeArbiter`/`GameEngine`; the new
 `GameView` aggregate DTO (which **replaces** `Controller::getBoardView()`) carrying
 `MotionView`/`JumpView`/`RestView`/selection/current-time snapshots to the UI; the
 traveling-piece animation, selection highlight, jump highlight and rest-countdown
@@ -82,14 +92,17 @@ loop does and doesn't do yet (no animations, no cooldown visuals).
 ```
 common/enums        <-- no dependencies (PieceColor, PieceType, PieceState, MoveValidationReason)
 common/PixelPosition <-- no dependencies ({int x, y} value type, shared by UI and logic/Controller)
+common/EventBus/EventBus.h <-- no dependencies (generic pub/sub, templated on caller's event type)
         ^
 common/DTO           -- View/DTO objects for rendering; depends on logic/model
+common/EventBus/Events.h -- event payload structs; depends on logic/model, same layering as common/DTO
         ^
 logic/model          -- core domain classes; depends only on common/enums
         ^
 logic/rules           -- per-piece legality; depends on logic/model + common/DTO/MoveValidation.h
         ^
-logic/Engine          -- GameEngine; depends on logic/model, logic/rules, logic/Controller/RealTimeArbiter
+logic/Engine          -- GameEngine; depends on logic/model, logic/rules, logic/Controller/RealTimeArbiter,
+                          common/EventBus (EventBus.h + Events.h)
         ^
 logic/Controller      -- Controller, RealTimeArbiter, BoardMapper; depends on logic/Engine, logic/model,
                           common/PixelPosition (input) and common/DTO/BoardView (output snapshot)
@@ -201,7 +214,11 @@ one is active is rejected with `MoveAlreadyInProgress`. This is a significant MV
 simplification versus the classic Kung Fu Chess variant, where every piece has an
 independent cooldown.
 
-`GameEngine` (`logic/Engine/GameEngine`) drives the simulation:
+`GameEngine` (`logic/Engine/GameEngine`) drives the simulation. Its constructor now
+also takes an `EventBus&` (stored as a reference member — safe because `GameEngine` is
+already never actually copied, only ever constructed once via `GameFactory`'s
+guaranteed-elided prvalue return; see "Event bus" below), which it publishes to at the
+points noted below:
 - `MILLIS_PER_SQUARE = 1000` — a move's duration is `pathLength * 1000ms`, where
   `pathLength` depends on piece type (King/Knight = 1; Pawn/Bishop = row distance;
   Rook = Manhattan distance; Queen = Manhattan if straight else row distance).
@@ -235,14 +252,22 @@ independent cooldown.
     runs, since removing the mover can shift `Board`'s internal vector and invalidate
     pointers into it) — the move itself doesn't happen. This is how "jump" acts as an
     ambush/counter mechanic, and successfully ambushing now costs the defender a brief
-    rest just like completing an ordinary move or jump does.
+    rest just like completing an ordinary move or jump does. The captured mover's
+    id/color/type/position are also captured before removal and published as a
+    `PieceCapturedEvent` (see "Event bus" below) right after the removal.
   - Otherwise: capture whatever occupies the destination (game-over if it was a King),
     `board.movePiece(from, to)`, then check pawn promotion (reaching the far row →
     `setType(Queen)`). This branch still isn't aware of post-*move* `Rest` scheduling
-    (that's `settleCompletedMotions`' job, not this pure board-mutation function).
+    (that's `settleCompletedMotions`' job, not this pure board-mutation function). If a
+    piece occupied the destination, its id/color/type/position are captured before
+    `removePiece` and published as a `PieceCapturedEvent`; if the removed piece was a
+    King, a `GameOverEvent` is published right after `gameState.setGameOver(true)`.
 - `advanceTime(ms)` — advances the arbiter's clock, then settles any motion/jump whose
   `endTime` has passed (`settleCompletedMotions` calls `executeMove` + `finishMotion`
-  then starts a `RestKind::Long` rest as described below; `settleCompletedJumps`
+  then starts a `RestKind::Long` rest as described below — and, only when the mover is
+  confirmed still alive and standing at `motion.getTo()` (see the ambush-vs-defender
+  note just below), publishes a `MoveExecutedEvent{pieceId, from, to}` right alongside
+  that `startRest` call; `settleCompletedJumps`
   resolves the piece id at the jump's position **before** calling `finishJump()`, then
   starts a `RestKind::Short` rest for it — this is the natural-timeout counterpart to
   the ambush-capture case above; between the two, every way a `Jump` can end now
@@ -260,6 +285,57 @@ independent cooldown.
 There is currently no code path that calls `advanceTime` on a real clock/timer — time
 only moves forward when a caller (the REPL's `wait <ms>` command, or a test) asks it
 to.
+
+## Event bus (`src/common/EventBus/`)
+
+Two files, split so the mechanism stays fully generic and reusable while the
+chess-specific payloads stay next to the domain they describe:
+
+- **`EventBus.h`** — a generic, header-only, type-safe publish/subscribe bus. Zero
+  dependency on `logic/model` or anything chess-specific, so it sits at the same
+  dependency-free layer as `common/enums`/`common/PixelPosition` in the module map, and
+  could be reused for any future event type without modification. Routing is keyed by
+  the C++ type of the event struct itself (`std::type_index(typeid(Event))`), not a
+  hand-maintained enum: `template<typename Event> subscribe(std::function<void(const
+  Event&)>)` returns an opaque `SubscriptionId` (a `std::atomic<std::size_t>` counter
+  shared across all event types), `unsubscribe<Event>(id)` removes it, and
+  `publish<Event>(const Event&)` invokes every subscriber currently registered for that
+  exact type. Internally, one `std::unordered_map<std::type_index,
+  std::unique_ptr<ISubscriberList>>` holds a type-erased list per event type (a tiny
+  polymorphic `ISubscriberList` base plus a templated `SubscriberList<Event>`
+  concrete type). **Thread safety**: a single `std::mutex` guards the map (same plain-
+  mutex style as `server/src/services/AuthService`, not a `shared_mutex`);
+  `subscribe`/`unsubscribe` lock briefly to mutate the map, and `publish` locks only
+  long enough to copy out the matching handler vector, then invokes the copied handlers
+  *after* releasing the lock. **Dispatch is synchronous and immediate** — `publish()`
+  calls matching handlers right away, on the calling thread, deliberately not a
+  queued/pumped model — copying the handler list before unlocking is what lets a
+  handler safely subscribe/unsubscribe/publish again from inside its own callback
+  without deadlocking. There is no singleton: like `Controller` holding a `GameEngine&`
+  or `GameLoop` holding a `Controller&`/`Renderer&`/`BoardCanvas&`, exactly one
+  `EventBus` is constructed by `main.cpp` and passed by reference to whatever needs to
+  publish or subscribe.
+- **`Events.h`** — the concrete event payload structs, one per roadmap feature target,
+  reusing an event across features that react to the same moment rather than inventing
+  redundant types: `GameStartedEvent` (game-start animations), `MoveExecutedEvent{int
+  pieceId; Position from, to}` (move logs, movement sound), `PieceCapturedEvent{int
+  pieceId; PieceColor color; PieceType type; Position position}` (capture sound, score
+  updates), `GameOverEvent` (final score update, end-of-game animation). This file
+  depends on `logic/model` (`Position`) and `common/enums` (`PieceColor`, `PieceType`)
+  — the same layering `common/DTO` already uses for the same reason (converting/
+  describing logic-layer state for a consumer outside `logic/`).
+
+`GameEngine` is currently the only publisher (see the `executeMove`/
+`settleCompletedMotions` call sites noted in "Real-time mechanics" above), and
+`main.cpp` publishes the one `GameStartedEvent` right after constructing the engine.
+**Nothing subscribes yet** — no `ScoreService`, move-log writer, sound player, or
+animation trigger exists in the codebase; this bus only makes sure the events those
+future features will need are already firing, so they can be added later as pure
+subscribers without touching `GameEngine` again. `server/`/`client/` do not use this
+bus and have no access to it — they are separate, currently-unlinked binaries from the
+`src/` build (see "Server / persistence / networking layer" below), so "score
+persistence" for now means "publish an event a future subscriber can act on," not an
+actual database write.
 
 ## Controller & command flow
 
@@ -355,10 +431,12 @@ and is now folded into `Controller::getGameView()`'s `BoardView` field.)
 
 ## IO layer (`src/logic/IO/`)
 
-- `GameFactory::createNewGame()` — the production entry point for starting a game.
-  Returns a fully-populated `GameEngine` as a single prvalue (`return
-  GameEngine(GameState(createClassicBoard()));`) — deliberately not through a named
-  local, so C++17's *guaranteed* copy elision applies. This matters because
+- `GameFactory::createNewGame(EventBus& eventBus)` — the production entry point for
+  starting a game. Takes the caller's `EventBus` and forwards it straight into the
+  `GameEngine` it builds (see "Event bus" below). Returns a fully-populated
+  `GameEngine` as a single prvalue (`return
+  GameEngine(GameState(createClassicBoard()), eventBus);`) — deliberately not through a
+  named local, so C++17's *guaranteed* copy elision applies. This matters because
   `GameEngine`'s `RuleEngine` member stores raw pointers to its own rule sub-objects
   (see Rules section above); an actual copy/move of a `GameEngine` would leave those
   pointers referring to the wrong object's memory. `createClassicBoard()` (private)
@@ -520,7 +598,8 @@ Two on-disk data formats exist but are **not read by any current C++ code**:
 ## Current state of integration
 
 The logic layer is now wired into the graphical executable:
-`main.cpp` calls `GameFactory::createNewGame()` → `Controller` → constructs
+`main.cpp` constructs an `EventBus`, calls `GameFactory::createNewGame(eventBus)`,
+publishes a one-off `GameStartedEvent` → `Controller` → constructs
 `BoardCanvas`/`SpriteManager`/`AnimationFrame`/`Renderer` → hands them plus the
 `Controller` to a `GameLoop` and calls `run()`. This is now the only entry point
 needed to play a game with a live board, mouse input, and real-time piece movement.
@@ -731,6 +810,7 @@ revisiting if a client ever has multiple requests in flight concurrently).
 | Fix/extend sprite rendering | `src/common/enums/PieceStateToString.h` (`Captured` has no backing on-disk folder), `src/UI/SpriteManager.cpp` (path/cache-key building), `src/UI/AnimationFrame.cpp` (which state/frame a piece requests) |
 | Change how pixel clicks map to board cells | `src/logic/Controller/BoardMapper.cpp`, fed via `Controller::handlePixelClick`/`handlePixelJump` |
 | Add/adjust tests | `src/tests/logic_tests/<matching-folder>/`, `src/tests/common_tests/` |
+| Add a new event / subscribe to a game event | `src/common/EventBus/Events.h` (new event struct), `src/common/EventBus/EventBus.h` (generic bus, shouldn't need changes), publisher call sites in `src/logic/Engine/GameEngine.cpp` (`executeMove`, `settleCompletedMotions`) or `src/main.cpp`; tests in `src/tests/common_tests/event_bus_test.cpp` |
 | Change the `users` table / user persistence | `server/src/persistence/Database.cpp` (schema), `server/src/persistence/UserRepository.cpp`; tests in `server/tests/user_repository_test.cpp` |
 | Change register/login business logic (not the DB rows) | `server/src/services/AuthService.cpp`; tests in `server/tests/auth_service_test.cpp` |
 | Change the JSON wire format for a message | `protocol/include/protocol/Message.h` (field names, `toJson`/`fromJson`), `protocol/include/protocol/MessageType.h` (the `"type"` string) — both `server/src/handlers/AuthRequestHandler.cpp` and `client/src/cli/CliShell.cpp` build/consume these |

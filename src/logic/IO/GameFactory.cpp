@@ -27,11 +27,11 @@ Board GameFactory::createClassicBoard()
     return board;
 }
 
-GameEngine GameFactory::createNewGame()
+GameEngine GameFactory::createNewGame(EventBus& eventBus)
 {
     // Returned as a single prvalue (not through a named local) so C++17's
     // guaranteed copy elision applies: GameEngine's RuleEngine stores pointers
     // to its own rule members, which would dangle if the GameEngine were ever
     // actually copied instead of constructed in place.
-    return GameEngine(GameState(createClassicBoard()));
+    return GameEngine(GameState(createClassicBoard()), eventBus);
 }
