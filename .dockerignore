@@ -1,0 +1,9 @@
+# Keeps the Docker build context small -- none of this is COPY'd by the
+# Dockerfile (which only needs CMakeLists.txt, common/, protocol/, server/),
+# but excluding it here still avoids sending it to the Docker daemon.
+build/
+client/
+lib/
+.git/
+*.db
+*.log

@@ -7,7 +7,7 @@
 // GameSession's real-time clock and scans the matchmaking queue,
 // independent of whether any client happens to be connected right now.
 #include <chrono>
-#include <iostream>
+#include <cstdlib>
 #include <memory>
 #include <thread>
 
@@ -16,6 +16,7 @@
 #include "handlers/AuthRequestHandler.h"
 #include "handlers/GameRequestHandler.h"
 #include "handlers/MatchmakingRequestHandler.h"
+#include "network/HealthCheckServer.h"
 #include "network/WebSocketServer.h"
 #include "persistence/IUserRepository.h"
 #include "persistence/RepositoryFactory.h"
@@ -27,6 +28,7 @@
 #include "protocol/MessageType.h"
 #include "common/Config/NetworkConfig.h"
 #include "common/Config/TimingConfig.h"
+#include "common/Logging/Logger.h"
 #include "common/MonotonicClock.h"
 #include "common/enums/PieceColor.h"
 
@@ -102,6 +104,14 @@ void runTickLoop(GameSessionManager& sessionManager, Matchmaker& matchmaker, Web
 
 int main()
 {
+    // "127.0.0.1" (matching NetworkConfig::DEFAULT_HOST) only accepts
+    // connections from the same machine/container; KUNGFUCHESS_HOST lets a
+    // container runtime (see Dockerfile/docker-compose.yml) override this to
+    // "0.0.0.0" so a published port is actually reachable from outside the
+    // container. Unset locally, so native/dev behavior is unchanged.
+    const char* hostOverride = std::getenv("KUNGFUCHESS_HOST");
+    const std::string bindHost = hostOverride ? std::string(hostOverride) : NetworkConfig::DEFAULT_HOST;
+
     const std::string dbPath = "kungfuchess.db";
     std::unique_ptr<IUserRepository> users =
         RepositoryFactory::createUserRepository(RepositoryBackend::Sqlite, dbPath);
@@ -113,7 +123,8 @@ int main()
     // a request handler yet -- see setRequestHandler below) specifically so
     // the sendTo lambdas passed to them can capture a real, already-existing
     // server to push through, instead of the console-log stub this used to be.
-    WebSocketServer server(NetworkConfig::DEFAULT_PORT);
+    WebSocketServer server(NetworkConfig::DEFAULT_PORT, bindHost);
+    HealthCheckServer healthCheckServer(NetworkConfig::HEALTH_CHECK_PORT, bindHost);
 
     GameSessionManager sessionManager(
         [&server](const std::string& connectionId, const std::string& json)
@@ -152,9 +163,13 @@ int main()
             sessionManager.onConnectionClosed(connectionId);
         });
 
-    std::cout << "KungFuChess server listening on ws://" << NetworkConfig::DEFAULT_HOST
-               << ":" << NetworkConfig::DEFAULT_PORT << "\n";
+    healthCheckServer.start();
+    common::Logger::info(
+        "health check listening on http://" + bindHost + ":" + std::to_string(NetworkConfig::HEALTH_CHECK_PORT) + "/");
+
     server.start();
+    common::Logger::info(
+        "KungFuChess server listening on ws://" + bindHost + ":" + std::to_string(NetworkConfig::DEFAULT_PORT));
     server.wait();
 
     return 0;

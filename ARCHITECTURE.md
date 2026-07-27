@@ -6,7 +6,42 @@ eventually look. Read this before exploring the source tree — it should make a
 re-read of the sources unnecessary for most tasks. If you change the architecture in a
 way that makes a section below wrong, update that section in the same change.
 
-Last reviewed: 2026-07-27, against the source tree as of the user-persistence
+Last reviewed: 2026-07-27, against the source tree as of MIGRATION_PLAN.md's
+Phase 0 ("Groundwork") — containerizing today's monolith with no architecture
+change, layered on top of the user-persistence repository-pattern refactor
+described below. That change: a Dockerfile (multi-stage, Linux, builds only
+`KungFuChessServer`) plus a `docker-compose.yml` (the server, plus placeholder
+`postgres`/`redis` containers the app doesn't talk to yet — reserved for
+Phase 1). Since `client/` links vendored Windows/MSVC-only OpenCV binaries
+(see "Build system" below) that can't configure or link on Linux at all, the
+root `CMakeLists.txt` gained a `BUILD_CLIENT` option (default `ON`, unchanged
+for every existing native/Windows workflow) guarding `add_subdirectory(client)`
+— the Docker build passes `-DBUILD_CLIENT=OFF` and never touches `client/`/`lib/`
+at all. Two small additions round out "basic observability": `common/Logging/
+Logger` (`common/Logging/Logger.h`/`.cpp` — a minimal leveled, timestamped,
+thread-safe logger; INFO/DEBUG to stdout, WARN/ERROR to stderr) replaces the
+one `std::cout` startup line in `server/src/main.cpp` and the previously-silent
+`catch`es in `server/src/network/WebSocketServer.cpp`'s `broadcast`/`sendTo`;
+and `server/src/network/HealthCheckServer` (new, `server/src/network/
+HealthCheckServer.h`/`.cpp`, wrapping `ix::HttpServer` — already vendored via
+the existing ixwebsocket dependency, no new library needed) serves a plain
+`GET`-anything → `200 {"status":"ok"}` liveness endpoint on its own port
+(`NetworkConfig::HEALTH_CHECK_PORT`, `9003`), independent of the WebSocket/JSON
+game protocol, for a container `HEALTHCHECK`/orchestrator probe to poll.
+One real (if narrow) behavior change was required to make "runs identically
+inside Docker" actually mean something: `WebSocketServer`'s bind address used
+to be hardcoded to `"127.0.0.1"` inside `WebSocketServer.cpp` regardless of
+`NetworkConfig::DEFAULT_HOST` — harmless on a native run, but fatal inside a
+container, since a process bound only to loopback is unreachable through a
+published Docker port no matter what. `WebSocketServer`'s (and the new
+`HealthCheckServer`'s) constructor now takes a `host` parameter (defaulting to
+`"127.0.0.1"`, preserving today's native behavior exactly), and
+`server/src/main.cpp` reads an optional `KUNGFUCHESS_HOST` environment
+variable to override it — the Dockerfile sets `KUNGFUCHESS_HOST=0.0.0.0` so
+the containerized server actually binds every interface; nothing changes for
+a plain local build where that variable is unset.
+
+Previously reviewed against the source tree as of the user-persistence
 repository-pattern refactor, layered on top of the bcrypt/ELO change described below.
 That refactor: `server/src/persistence/UserRepository` (the single concrete class every
 consumer named directly) was replaced with `IUserRepository` (a pure abstract interface —
@@ -108,6 +143,11 @@ of scope (TLS, session persistence across a server restart, spectators, resign/d
   `opencv_world451`. The root `CMakeLists.txt` only *defines* `OPENCV_DIR`/
   `OPENCV_INCLUDE_DIR`/`OPENCV_LIB_DIR`; only `client/`'s `KungFuChessClientUi` library
   actually links OpenCV now — the DLL is copied next to `KungFuChessClient` post-build.
+  These binaries are prebuilt for MSVC/Windows only, so `client/` cannot configure or
+  link on Linux at all — the root `CMakeLists.txt`'s `BUILD_CLIENT` option (default
+  `ON`) guards `add_subdirectory(client)` specifically so a server-only Linux build
+  (the Docker image; see top of this document) can pass `-DBUILD_CLIENT=OFF` and skip
+  `client/` entirely instead of failing partway through.
 - C++ standard: 17.
 - Root `CMakeLists.txt` `FetchContent`s `ixwebsocket` (pinned `v12.0.1`, built with
   `USE_TLS`/`USE_ZLIB` off — plain `ws://` only, no compression) and `nlohmann_json`
@@ -887,7 +927,13 @@ both implemented now — see "Server / persistence / networking layer" above.)
     (`common/MonotonicClock.h`, wall-clock `steady_clock`), completely independent of
     the `milliseconds` argument that advances the game engine's own logical clock —
     easy to conflate when reading `tick()`, since both fire from the same call.
-16. **New, from the bcrypt/ELO change**: `GameEngine::executeMove`'s king-capture branch
+16. **New, from Phase 0 groundwork**: `docker-compose.yml`'s `postgres`/`redis`
+    services are placeholders only — nothing in `KungFuChessServer` talks to either
+    yet (SQLite via `SqliteUserRepository` remains the only store actually opened).
+    They exist now so the compose file/network/volumes are in place before
+    MIGRATION_PLAN.md's Phase 1 (externalizing state stores) needs them; don't mistake
+    their presence in `docker-compose.yml` for those backends actually being wired up.
+17. **New, from the bcrypt/ELO change**: `GameEngine::executeMove`'s king-capture branch
     reads `destinationPiece`'s color for `GameOverEvent` -- `destinationPiece` is a raw
     pointer into `Board`'s piece vector, and `getBoard().removePiece(motion.getTo())`
     (called earlier in the same function, for the ordinary-capture case) invalidates
@@ -932,3 +978,8 @@ both implemented now — see "Server / persistence / networking layer" above.)
 | Add a new WebSocket message type/command | `server/src/handlers/GameRequestHandler.cpp` (or `AuthRequestHandler.cpp`/`MatchmakingRequestHandler.cpp`) for dispatch, `protocol/include/protocol/Message.h`/`MessageType.h` for the new request/result structs, `client/src/game/GameClient.cpp` or `client/src/cli/CliShell.cpp` for the client side — `WebSocketServer`/`WebSocketClient` themselves don't need to change for a new message type |
 | Change how the server binds/accepts WebSocket connections, sends targeted/broadcast pushes, or reports drops | `server/src/network/WebSocketServer.cpp` (the only file including ixwebsocket's server headers) |
 | Change how the client connects or sends/receives | `client/src/network/WebSocketClient.cpp` (the only file including ixwebsocket's client headers) |
+| Change the health-check endpoint (port, response body) | `server/src/network/HealthCheckServer.cpp`, `common/Config/NetworkConfig.h` (`HEALTH_CHECK_PORT`) |
+| Change log format/level or add a new log call | `common/Logging/Logger.h`/`.cpp` (`common::Logger::debug`/`info`/`warn`/`error`) |
+| Change the Docker image or what's built for it | `Dockerfile`, root `CMakeLists.txt` (`BUILD_CLIENT` option) |
+| Change what's in the local Docker Compose stack | `docker-compose.yml` |
+| Change the interface the server binds (native default vs. inside Docker) | `server/src/main.cpp` (`KUNGFUCHESS_HOST` env override), `server/src/network/WebSocketServer.h`/`.cpp` (`host` constructor parameter) |

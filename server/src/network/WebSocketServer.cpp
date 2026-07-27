@@ -8,6 +8,8 @@
 #include <ixwebsocket/IXNetSystem.h>
 #include <ixwebsocket/IXWebSocketServer.h>
 
+#include "common/Logging/Logger.h"
+
 struct WebSocketServer::Impl
 {
     ix::WebSocketServer server;
@@ -21,14 +23,14 @@ struct WebSocketServer::Impl
     std::mutex connectionsMutex;
     std::unordered_map<std::string, ix::WebSocket*> connections;
 
-    explicit Impl(int port)
-        : server(port, "127.0.0.1")
+    Impl(int port, const std::string& host)
+        : server(port, host)
     {
     }
 };
 
-WebSocketServer::WebSocketServer(int port)
-    : impl(std::make_unique<Impl>(port))
+WebSocketServer::WebSocketServer(int port, std::string host)
+    : impl(std::make_unique<Impl>(port, host))
 {
     // Required on Windows (Winsock init) before any socket use; a harmless
     // no-op on other platforms. Paired with uninitNetSystem() in the destructor.
@@ -39,8 +41,11 @@ WebSocketServer::WebSocketServer(int port)
         {
             if (msg->type == ix::WebSocketMessageType::Open)
             {
-                std::lock_guard<std::mutex> lock(impl->connectionsMutex);
-                impl->connections[connectionState->getId()] = &webSocket;
+                {
+                    std::lock_guard<std::mutex> lock(impl->connectionsMutex);
+                    impl->connections[connectionState->getId()] = &webSocket;
+                }
+                common::Logger::info("connection opened: " + connectionState->getId());
             }
             else if (msg->type == ix::WebSocketMessageType::Close)
             {
@@ -49,6 +54,7 @@ WebSocketServer::WebSocketServer(int port)
                     std::lock_guard<std::mutex> lock(impl->connectionsMutex);
                     impl->connections.erase(connectionId);
                 }
+                common::Logger::info("connection closed: " + connectionId);
                 if (impl->closeHandler)
                     impl->closeHandler(connectionId);
             }
@@ -89,8 +95,9 @@ void WebSocketServer::broadcast(const std::string& json)
         {
             entry.second->send(json);
         }
-        catch (const std::exception&)
+        catch (const std::exception& exception)
         {
+            common::Logger::warn(std::string("broadcast send failed: ") + exception.what());
         }
     }
 }
@@ -107,8 +114,9 @@ void WebSocketServer::sendTo(const std::string& connectionId, const std::string&
     {
         it->second->send(json);
     }
-    catch (const std::exception&)
+    catch (const std::exception& exception)
     {
+        common::Logger::warn("sendTo(" + connectionId + ") failed: " + exception.what());
     }
 }
 
@@ -116,7 +124,10 @@ void WebSocketServer::start()
 {
     const auto result = impl->server.listen();
     if (!result.first)
+    {
+        common::Logger::error("WebSocketServer failed to listen: " + result.second);
         throw std::runtime_error("WebSocketServer failed to listen: " + result.second);
+    }
 
     impl->server.start();
 }

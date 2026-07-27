@@ -47,4 +47,12 @@ add_subdirectory(protocol)
 add_subdirectory(server)
 
 # ---- CLI client (standalone executable, talks to the server over ws://) ----
-add_subdirectory(client)
+# Off by default when building only the server (e.g. the Docker image, or any
+# Linux build): client/ links the vendored OpenCV binaries under lib/, which
+# are prebuilt for MSVC/Windows only, so client/ can't configure or link on
+# Linux at all. Server-only builds (`cmake -DBUILD_CLIENT=OFF`) skip it
+# entirely instead of failing partway through.
+option(BUILD_CLIENT "Build the KungFuChessClient executable (requires vendored Windows OpenCV binaries)" ON)
+if(BUILD_CLIENT)
+    add_subdirectory(client)
+endif()

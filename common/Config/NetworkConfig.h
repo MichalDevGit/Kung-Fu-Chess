@@ -8,6 +8,12 @@ namespace NetworkConfig
 {
     constexpr const char* DEFAULT_HOST = "127.0.0.1";
     constexpr int DEFAULT_PORT = 9002;
+
+    // Plain HTTP liveness endpoint (server/src/network/HealthCheckServer),
+    // separate from the game's WebSocket port -- lets an orchestrator (Docker
+    // healthcheck, Kubernetes probe) check "is this process up" without
+    // speaking the WebSocket/JSON protocol at all.
+    constexpr int HEALTH_CHECK_PORT = 9003;
 }
 
 #endif

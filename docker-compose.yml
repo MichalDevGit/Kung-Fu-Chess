@@ -1,0 +1,36 @@
+# Phase 0 (MIGRATION_PLAN.md): today's single server, containerized as-is,
+# plus placeholder Postgres/Redis containers the app doesn't talk to yet.
+# They exist now so the compose file itself, the network, and the volumes
+# are already in place before Phase 1 (externalizing state stores) needs
+# them -- nothing here changes what KungFuChessServer actually does.
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "9002:9002" # game WebSocket
+      - "9003:9003" # health check (GET /health)
+    volumes:
+      - kungfuchess-data:/app/data
+
+  # Unused by the app today -- SQLite is still the only store KungFuChessServer
+  # actually opens (see server/src/main.cpp). Reserved for Phase 1's
+  # PostgresUserRepository.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kungfuchess
+      POSTGRES_PASSWORD: kungfuchess
+      POSTGRES_DB: kungfuchess
+    volumes:
+      - kungfuchess-postgres:/var/lib/postgresql/data
+
+  # Unused by the app today -- reserved for Phase 1's Redis-backed
+  # ConnectionRegistry/Matchmaker/GameSessionManager index implementations.
+  redis:
+    image: redis:7-alpine
+
+volumes:
+  kungfuchess-data:
+  kungfuchess-postgres:

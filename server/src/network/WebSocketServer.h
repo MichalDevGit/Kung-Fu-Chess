@@ -26,7 +26,12 @@ public:
     // this class's internal connections map silently forgetting about it.
     using CloseHandler = std::function<void(const std::string& connectionId)>;
 
-    explicit WebSocketServer(int port);
+    // host is the interface to bind, not a display value -- "127.0.0.1"
+    // (the default, matching this class's original hardcoded behavior) only
+    // accepts connections from inside the same machine/container. Pass
+    // "0.0.0.0" to accept connections from other hosts (e.g. from outside a
+    // Docker container via a published port).
+    explicit WebSocketServer(int port, std::string host = "127.0.0.1");
     ~WebSocketServer();
 
     WebSocketServer(const WebSocketServer&) = delete;
