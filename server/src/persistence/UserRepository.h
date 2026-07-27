@@ -13,19 +13,21 @@ class UserRepository
 public:
     explicit UserRepository(Database& database);
 
-    // Inserts a row with the password stored as given (plain text for now --
-    // hashing is a later, dedicated security step). Throws (propagates SQLite's
-    // UNIQUE constraint violation) if the username already exists.
-    UserRecord createUser(const std::string& username, const std::string& password);
+    // Inserts a row with passwordHash stored exactly as given. This layer is
+    // deliberately ignorant of hashing -- it stores whatever credential
+    // string the caller hands it (see server/src/services/AuthService, the
+    // only caller, which owns the PasswordHasher). New users start at
+    // RatingConfig::INITIAL_RATING. Throws (propagates SQLite's UNIQUE
+    // constraint violation) if the username already exists.
+    UserRecord createUser(const std::string& username, const std::string& passwordHash);
 
     std::optional<UserRecord> findByUsername(const std::string& username) const;
     std::optional<UserRecord> findById(int id) const;
 
-    // Placeholder until hashing is added -- kept as its own method now so callers
-    // don't need to change when it is.
-    bool verifyPassword(const std::string& username, const std::string& password) const;
-
-    void updateScore(int userId, int delta);
+    // Sets score to an absolute value -- used by RatingService after
+    // computing a post-game ELO rating (as opposed to a relative delta,
+    // which nothing in this codebase needs anymore).
+    void setScore(int userId, int newScore);
 
 private:
     Database& database;

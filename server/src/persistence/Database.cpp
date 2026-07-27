@@ -13,6 +13,9 @@ SQLite::Database& Database::raw()
 
 void Database::createSchema()
 {
+    // score's "DEFAULT 0" below is never actually relied on -- UserRepository::
+    // createUser always inserts an explicit RatingConfig::INITIAL_RATING, so
+    // C++ (not this schema) is the one source of truth for the starting rating.
     db.exec(
         "CREATE TABLE IF NOT EXISTS users ("
         "  id         INTEGER PRIMARY KEY,"

@@ -6,7 +6,26 @@ eventually look. Read this before exploring the source tree — it should make a
 re-read of the sources unnecessary for most tasks. If you change the architecture in a
 way that makes a section below wrong, update that section in the same change.
 
-Last reviewed: 2026-07-27, against the source tree as of the auth-gated matchmaking
+Last reviewed: 2026-07-27, against the source tree as of the bcrypt-hashed-passwords +
+ELO-rating change, layered on top of the auth-gated matchmaking change described below.
+That later change: (a) `server/src/security/PasswordHasher` wraps a vendored bcrypt
+implementation (`bcrypt_vendor`, source-fetched via `FetchContent_Populate` in
+`server/CMakeLists.txt` since its own build system targets GCC/make, not MSVC) behind a
+two-method `hash`/`verify` interface, with `AuthService` now the only thing that calls
+it — `UserRepository` itself no longer knows hashing exists at all, just stores whatever
+credential string it's given; (b) `common/Config/RatingConfig.h` +
+`server/src/services/EloCalculator` (pure math, no DB) + `server/src/services/
+RatingService` (reads both players' current ratings, computes new ones, persists both)
+replace the old flat `MatchmakingConfig::SCORE_DELTA_WIN`/`_LOSS`, and — fixing a real
+gap this surfaced — an ordinary king-capture win now updates rating too, not just a
+disconnect-timeout forfeit: `GameSession`'s `ScoreUpdateFn` became `GameOutcomeFn`
+(winner/loser user ids, not a raw delta), and `GameOverEvent` gained a `loserColor` field
+(read from the captured king *before* `GameEngine::executeMove` removes it from the
+board — the removal used to happen first) so `GameSession` can resolve winner/loser and
+call the same outcome callback both endings now share.
+See "Server / persistence / networking layer" below for the full design of both.
+
+Previously reviewed against the source tree as of the auth-gated matchmaking
 change (five phases, tracked in that order, layered on top of the earlier networked
 client/server split): (1) `server/src/network/WebSocketServer` threaded a stable
 per-connection id through every request, plus a targeted `sendTo(connectionId, json)`
@@ -50,9 +69,9 @@ auth, then an OpenCV-rendered game pane, over one connection), and `protocol/`/`
 in-progress codebase: the domain logic (rules, move validation, real-time timing) is
 fairly well developed and unit-tested; the network layer now covers real per-connection
 push, matchmaking, per-match session isolation, color-ownership enforcement, and
-disconnect/reconnect handling — see the Gaps list below for what's still deliberately
-out of scope (TLS, password hashing, session persistence across a server restart,
-spectators, resign/draw, ELO-style rating).
+disconnect/reconnect handling; passwords are bcrypt-hashed and both game-ending paths
+apply an ELO rating update — see the Gaps list below for what's still deliberately out
+of scope (TLS, session persistence across a server restart, spectators, resign/draw).
 
 ## Build system
 
@@ -488,14 +507,14 @@ What's still missing/rough:
   exists for it at all — see Gaps).
 - No visual feedback for check/checkmate/stalemate (none of those are implemented at
   the rules level either — see Gaps).
-- Password hashing (`server/src/persistence/UserRepository`) is still plain text.
 - `wss://`/TLS still doesn't exist — plain `ws://` only.
 - Matchmaking/session/reconnect state is entirely in-memory — a server restart drops
   every queued or in-progress game (scores persist in SQLite; games don't). No
   persistence-across-restart is planned yet.
-- No spectators, no resign/draw offers, no rooms beyond 1v1, no ELO-style rating (score
-  deltas on forfeit are a flat `MatchmakingConfig::SCORE_DELTA_WIN`/`_LOSS`) — all
-  deliberately out of scope for now.
+- No spectators, no resign/draw offers, no rooms beyond 1v1 — all deliberately out of
+  scope for now. (ELO-style rating itself is implemented — see
+  `server/src/services/EloCalculator`/`RatingService` — this bullet is only about the
+  still-missing social/matchmaking features.)
 
 ## Testing
 
@@ -573,13 +592,33 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
 
 ### `server/` — persistence + matchmaking + game engine + WebSocket networking
 
-- `server/src/persistence/*` — unchanged: `UserRecord`, `Database`, `UserRepository`
-  (passwords still plain text, deliberately postponed). `UserRepository::updateScore`
-  is now also called from `GameSessionManager`'s forfeit-score callback (see below), not
-  just from wherever else it might be used.
-- `server/src/services/AuthService` — unchanged: thin, networking-agnostic wrapper
-  around `UserRepository`, its own mutex (shared SQLite connection, called
-  concurrently once wired into `WebSocketServer`).
+- `server/src/persistence/*` — `UserRecord`, `Database`, `UserRepository`.
+  `UserRepository` is deliberately ignorant of hashing: `createUser(username,
+  passwordHash)` stores whatever credential string it's given (hashing is
+  `AuthService`'s job, see below), and new users start at
+  `RatingConfig::INITIAL_RATING` (an explicit insert value, not the schema's inert
+  `DEFAULT 0`). `verifyPassword` is gone (moved to `AuthService`); `updateScore`
+  (relative delta) is gone too, replaced by `setScore(userId, newScore)` (absolute --
+  what an ELO update needs), called from `RatingService` (see below), which is in turn
+  what every `GameSession`'s `GameOutcomeFn` closes over.
+- `server/src/security/PasswordHasher` — **new**. The only class that knows a hashing
+  algorithm exists: `hash(plaintext)`/`verify(plaintext, storedHash)`, wrapping a
+  vendored bcrypt (`bcrypt_vendor` target in `server/CMakeLists.txt` -- fetched by
+  commit via `FetchContent_Populate`, not `FetchContent_MakeAvailable`, since bcrypt's
+  own `CMakeLists.txt` targets GCC/make with a GNU-assembler `.S` file and won't
+  configure under the MSVC generator this project builds with; `x86.S` is excluded from
+  `bcrypt_vendor`'s sources entirely -- `crypt_blowfish.c` only takes that asm path
+  under `#ifdef __i386__`, a GCC-only macro MSVC never defines, so the portable C path
+  always runs here regardless). Cost factor lives in
+  `server/src/security/SecurityConfig.h` (`BCRYPT_COST_FACTOR`), not hardcoded inside
+  `PasswordHasher.cpp`.
+- `server/src/services/AuthService` — thin, networking-agnostic wrapper around
+  `UserRepository`, its own mutex (shared SQLite connection, called concurrently once
+  wired into `WebSocketServer`). Now also owns the one `PasswordHasher` used for both
+  directions of credential handling: `registerUser` hashes before `UserRepository` ever
+  sees the password; `login` verifies the stored hash against what `UserRepository`
+  hands back. This is the seam where "hashing" and "persistence" are kept separate --
+  `UserRepository` never hashes or compares passwords itself.
 - `server/src/services/ConnectionRegistry` — **new**. Mutex-guarded `connectionId ->
   {userId, username, score}` (plus the reverse `userId -> connectionId`), populated
   only by `AuthRequestHandler` on a successful `login` (`register` never authenticates
@@ -624,9 +663,14 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
     flip a slot's disconnected timestamp and push `opponent_disconnected` (to whoever's
     left connected) / `opponent_reconnected` (to the *other* participant specifically,
     not back to the one who just reconnected).
-  - `forfeitTo(winner, loser)` — sets `finished`, applies
-    `MatchmakingConfig::SCORE_DELTA_WIN`/`_LOSS` via the injected `ScoreUpdateFn`, pushes
-    `GameOverMessage{"opponent_disconnected", winner.userId}`.
+  - `forfeitTo(winner, loser)` — sets `finished`, applies the ELO rating update via the
+    injected `GameOutcomeFn(winnerUserId, loserUserId)`, pushes
+    `GameOverMessage{"opponent_disconnected", winner.userId}`. The `GameOverEvent`
+    subscriber (an ordinary king-capture win) now calls this exact same
+    `GameOutcomeFn` too -- resolving winner/loser from the event's `loserColor` field --
+    fixing a real gap where a normal win used to update no one's rating at all. Both
+    endings therefore share one rating-update code path instead of each inventing its
+    own.
   - `resumeInfoFor(userId) -> optional<ResumeInfo{color, opponentUsername}>` — lets
     `AuthRequestHandler` rebuild a `MatchFoundResult` for a reconnecting player without
     reaching into this class's internals.
@@ -644,8 +688,23 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
   (which also drops that connection's index entry, so a stale route can never linger)
   wire reconnect/disconnect through to the right `GameSession`. `tickAll` now also
   removes any session `isFinished()` reports, along with its index entries. Constructed
-  with a `SendToFn` (shared by every session it creates) and a `UserRepository&` (used
-  to build each session's `ScoreUpdateFn`).
+  with a `SendToFn` (shared by every session it creates) and a `UserRepository&`, from
+  which it builds one `RatingService` member (see below) that every session it creates
+  gets a `GameOutcomeFn` closing over.
+- `server/src/services/EloCalculator` — **new**. Pure, stateless ELO math (no DB, no
+  networking, no locking): `applyResult(ratingWinner, ratingLoser) -> Outcome{
+  newWinnerRating, newLoserRating}`, using the standard logistic expected-score curve
+  and `common/Config/RatingConfig::K_FACTOR`. Deliberately separate from
+  `RatingService` so the arithmetic itself stays trivially unit-testable without a
+  `UserRepository` in the loop.
+- `server/src/services/RatingService` — **new**. The single place that turns "who won"
+  into "what changed in the DB": `applyGameResult(winnerUserId, loserUserId)` reads both
+  users' current ratings via `UserRepository::findById`, computes new ones via
+  `EloCalculator`, and persists both via `UserRepository::setScore`. This is what
+  replaced the old flat `MatchmakingConfig::SCORE_DELTA_WIN`/`_LOSS`, and — since both
+  `GameSession::forfeitTo` and its `GameOverEvent` subscriber call the same
+  `GameOutcomeFn` (see above) — the only rating-update code path in the whole system,
+  covering both game-ending shapes.
 - `server/src/handlers/AuthRequestHandler` — on a successful `login`, also (1) records
   `connectionId -> user` in `ConnectionRegistry`, and (2) checks
   `GameSessionManager::findSessionByUserId` — if this user already has an active
@@ -711,9 +770,10 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
 - `client/src/ui/*` + `client/src/game/{BoardMapper,GameClient}` — unchanged in their
   own right; see "UI / rendering layer" and "`client/src/game/`" above.
 
-Not yet done: password hashing; `wss://`/TLS; request/response correlation IDs (fine
-today since each client only ever has one request in flight at a time); session
-persistence across a server restart; spectators; resign/draw; ELO-style rating.
+Not yet done: `wss://`/TLS; request/response correlation IDs (fine today since each
+client only ever has one request in flight at a time); session persistence across a
+server restart; spectators; resign/draw. (Password hashing and ELO-style rating are
+both implemented now — see "Server / persistence / networking layer" above.)
 
 ## Known gaps / things to be careful about when editing
 
@@ -775,6 +835,14 @@ persistence across a server restart; spectators; resign/draw; ELO-style rating.
     (`common/MonotonicClock.h`, wall-clock `steady_clock`), completely independent of
     the `milliseconds` argument that advances the game engine's own logical clock —
     easy to conflate when reading `tick()`, since both fire from the same call.
+16. **New, from the bcrypt/ELO change**: `GameEngine::executeMove`'s king-capture branch
+    reads `destinationPiece`'s color for `GameOverEvent` -- `destinationPiece` is a raw
+    pointer into `Board`'s piece vector, and `getBoard().removePiece(motion.getTo())`
+    (called earlier in the same function, for the ordinary-capture case) invalidates
+    it. The color is captured into a local (`capturedKingColor`) *before* that removal,
+    specifically so `GameOverEvent{capturedKingColor}` never dereferences a dangling
+    pointer -- if you touch this function again, keep reading anything off
+    `destinationPiece` before the `removePiece` call, not after.
 
 ## Where to look for X
 
@@ -798,10 +866,12 @@ persistence across a server restart; spectators; resign/draw; ELO-style rating.
 | Add/adjust server-side domain tests | `server/tests/game_tests/<matching-folder>/`, `server/tests/common_tests/` |
 | Add a new event / subscribe to a game event | `common/EventBus/Events.h` (new event struct), publisher call sites in `server/src/game/Engine/GameEngine.cpp`, subscriber wiring in `server/src/services/GameSession.cpp` (`subscribeToEvents`) |
 | Change the `users` table / user persistence | `server/src/persistence/Database.cpp` (schema), `server/src/persistence/UserRepository.cpp`; tests in `server/tests/user_repository_test.cpp` |
+| Change password hashing (cost factor, algorithm) | `server/src/security/SecurityConfig.h`, `server/src/security/PasswordHasher.cpp`; tests in `server/tests/password_hasher_test.cpp` |
 | Change register/login business logic (not the DB rows) | `server/src/services/AuthService.cpp`; tests in `server/tests/auth_service_test.cpp` |
 | Change game-session hosting, tick behavior, or session lookup | `server/src/services/GameSession.cpp`/`GameSessionManager.cpp`; tests in `server/tests/game_session_test.cpp` |
 | Change matchmaking pairing rules, wait timeout, or score range | `common/Config/MatchmakingConfig.h`, `server/src/services/Matchmaker.cpp`; tests in `server/tests/matchmaker_test.cpp` |
-| Change disconnect-grace duration or forfeit score deltas | `common/Config/MatchmakingConfig.h`, `server/src/services/GameSession.cpp` (`tick`, `forfeitTo`) |
+| Change disconnect-grace duration | `common/Config/MatchmakingConfig.h`, `server/src/services/GameSession.cpp` (`tick`, `forfeitTo`) |
+| Change ELO rating math (K-factor, starting rating) or how a game outcome is persisted | `common/Config/RatingConfig.h`, `server/src/services/EloCalculator.cpp` (math), `server/src/services/RatingService.cpp` (persistence); tests in `server/tests/elo_calculator_test.cpp`/`rating_service_test.cpp` |
 | Change reconnect detection/resume behavior | `server/src/handlers/AuthRequestHandler.cpp` (the `login` branch), `server/src/services/GameSessionManager.cpp` (`rebindConnection`), `server/src/services/GameSession.cpp` (`markReconnected`, `resumeInfoFor`) |
 | Change the auth/matchmaking/game/CLI/GUI hand-off order on the client | `client/src/main.cpp` |
 | Change the JSON wire format for a message | `protocol/include/protocol/Message.h` (field names, `toJson`/`fromJson`), `protocol/include/protocol/MessageType.h` (the `"type"` string); round-trip tests in `protocol/tests/message_test.cpp` |

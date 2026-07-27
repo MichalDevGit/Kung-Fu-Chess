@@ -8,12 +8,12 @@
 #include "../../../common/Config/MatchmakingConfig.h"
 #include "protocol/Message.h"
 
-GameSession::GameSession(std::string id, Player white, Player black, SendToFn sendTo, ScoreUpdateFn scoreUpdate)
+GameSession::GameSession(std::string id, Player white, Player black, SendToFn sendTo, GameOutcomeFn gameOutcome)
     : id(std::move(id)),
       white(std::move(white)),
       black(std::move(black)),
       sendTo(std::move(sendTo)),
-      scoreUpdate(std::move(scoreUpdate)),
+      gameOutcome(std::move(gameOutcome)),
       eventBus(),
       engine(GameFactory::createNewGame(eventBus)),
       controller(engine)
@@ -199,8 +199,7 @@ void GameSession::forfeitTo(const Player& winner, const Player& loser)
     // Called with `mutex` already held (from tick()).
     finished = true;
 
-    scoreUpdate(winner.userId, MatchmakingConfig::SCORE_DELTA_WIN);
-    scoreUpdate(loser.userId, MatchmakingConfig::SCORE_DELTA_LOSS);
+    gameOutcome(winner.userId, loser.userId);
 
     sendToParticipants(protocol::GameOverMessage{"opponent_disconnected", winner.userId}.toJson());
 }
@@ -219,10 +218,16 @@ void GameSession::subscribeToEvents()
             sendToParticipants(protocol::GameStartedMessage{}.toJson());
         });
 
-    eventBus.subscribe<GameOverEvent>([this](const GameOverEvent&)
+    eventBus.subscribe<GameOverEvent>([this](const GameOverEvent& event)
         {
             finished = true;
-            sendToParticipants(protocol::GameOverMessage{}.toJson());
+
+            const bool whiteLost = event.loserColor == PieceColor::White;
+            const Player& loser = whiteLost ? white : black;
+            const Player& winner = whiteLost ? black : white;
+            gameOutcome(winner.userId, loser.userId);
+
+            sendToParticipants(protocol::GameOverMessage{"", winner.userId}.toJson());
         });
 
     // MoveExecutedEvent/PieceCapturedEvent have no dedicated wire message --

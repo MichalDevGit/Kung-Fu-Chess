@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 #include "GameSession.h"
+#include "RatingService.h"
 
 class UserRepository;
 
@@ -30,8 +31,10 @@ class GameSessionManager
 public:
     // sendTo is shared by every session this manager creates (each
     // GameSession only ever calls it with its own two participants'
-    // connection ids). userRepository backs the ScoreUpdateFn every session
-    // gets, for forfeit-by-disconnect score deltas (see GameSession::forfeitTo).
+    // connection ids). userRepository backs the RatingService every session's
+    // GameOutcomeFn closes over, for ELO rating updates on either
+    // game-ending path (see GameSession::forfeitTo and its GameOverEvent
+    // subscriber).
     GameSessionManager(GameSession::SendToFn sendTo, UserRepository& userRepository);
 
     GameSession& createSession(GameSession::Player white, GameSession::Player black);
@@ -60,7 +63,7 @@ public:
 private:
     std::mutex mutex;
     GameSession::SendToFn sendTo;
-    UserRepository& userRepository;
+    RatingService ratingService;
     long long nextSessionNumber = 1;
 
     std::unordered_map<std::string, std::unique_ptr<GameSession>> sessions;

@@ -38,11 +38,14 @@ class GameSession
 public:
     using SendToFn = std::function<void(const std::string& connectionId, const std::string& json)>;
 
-    // Applies a flat score delta to a user on game-over -- injected rather
-    // than holding a UserRepository& directly, so GameSession itself never
-    // needs to know persistence exists (same discipline SendToFn already
-    // keeps it from knowing WebSocketServer/ixwebsocket exist).
-    using ScoreUpdateFn = std::function<void(int userId, int delta)>;
+    // Applies a game's outcome (winner/loser user ids) as an ELO rating
+    // update on game-over -- injected rather than holding a RatingService&
+    // directly, so GameSession itself never needs to know persistence exists
+    // (same discipline SendToFn already keeps it from knowing
+    // WebSocketServer/ixwebsocket exist). Both game-ending paths (an ordinary
+    // king-capture win and a disconnect-timeout forfeit) call this same
+    // callback -- see forfeitTo() and the GameOverEvent subscriber.
+    using GameOutcomeFn = std::function<void(int winnerUserId, int loserUserId)>;
 
     struct Player
     {
@@ -61,7 +64,7 @@ public:
         std::string reason; // e.g. "not_your_piece", "unknown_connection" -- empty when accepted
     };
 
-    GameSession(std::string id, Player white, Player black, SendToFn sendTo, ScoreUpdateFn scoreUpdate);
+    GameSession(std::string id, Player white, Player black, SendToFn sendTo, GameOutcomeFn gameOutcome);
 
     const std::string& getId() const;
 
@@ -73,8 +76,8 @@ public:
     // request -- real-time cooldowns must progress whether or not any
     // client happens to be connected right now. Also checks whether a
     // disconnected participant's grace period has expired and, if so,
-    // forfeits the game (applies the score delta, pushes GameOverMessage,
-    // marks this session finished).
+    // forfeits the game (applies the ELO rating update via gameOutcome,
+    // pushes GameOverMessage, marks this session finished).
     void tick(long long milliseconds);
 
     // connectionId no longer belongs to whichever participant it was bound
@@ -121,7 +124,7 @@ private:
     bool finished = false;
 
     SendToFn sendTo;
-    ScoreUpdateFn scoreUpdate;
+    GameOutcomeFn gameOutcome;
 
     mutable std::mutex mutex;
     EventBus eventBus;
@@ -136,9 +139,10 @@ private:
     PieceColor colorOf(const Player* player) const; // player == &white ? White : Black
 
     // Runs with `mutex` already held -- ends the game in favor of `winner`,
-    // applies the score delta, and pushes GameOverMessage. Shared by both
-    // the forfeit-timeout path (tick()) and, later, any other reason a
-    // session might need to end without a king capture.
+    // applies the ELO rating update via gameOutcome, and pushes
+    // GameOverMessage. Shared by both the forfeit-timeout path (tick()) and,
+    // later, any other reason a session might need to end without a king
+    // capture.
     void forfeitTo(const Player& winner, const Player& loser);
 };
 

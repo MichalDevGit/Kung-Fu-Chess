@@ -148,6 +148,11 @@ void GameEngine::executeMove(const Motion& motion)
         destinationPiece != nullptr &&
         destinationPiece->getType() == PieceType::King;
 
+    // Captured before removePiece() below invalidates destinationPiece --
+    // GameOverEvent still needs the captured king's color afterward.
+    const PieceColor capturedKingColor =
+        kingCaptured ? destinationPiece->getColor() : PieceColor::None;
+
     if (destinationPiece != nullptr)
     {
         PieceCapturedEvent capturedEvent{
@@ -169,7 +174,7 @@ void GameEngine::executeMove(const Motion& motion)
     {
         gameState.setGameOver(true);
 
-        eventBus.publish(GameOverEvent{});
+        eventBus.publish(GameOverEvent{capturedKingColor});
     }
 
     Piece* movedPiece =

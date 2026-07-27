@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -21,9 +22,9 @@ GameSession::Player blackPlayer()
 }
 
 // Real UserRepository backed by an in-memory SQLite DB -- GameSessionManager
-// needs one to construct the ScoreUpdateFn it hands every session (see
+// needs one to build the RatingService its GameOutcomeFn closes over (see
 // GameSessionManager::createSession); tests don't care about the persisted
-// rows, only that construction/forfeit score calls don't crash.
+// rows, only that construction/forfeit rating calls don't crash.
 struct TestUserRepository
 {
     Database database{":memory:"};
@@ -126,6 +127,50 @@ TEST_CASE("GameSession::getGameView/isGameOver reflect this session's own state"
     CHECK(session.isGameOver() == false);
     CHECK(session.getGameView().getBoard().getRows() == 8);
     CHECK(session.getGameView().getBoard().getCols() == 8);
+}
+
+TEST_CASE("An ordinary king-capture win fires GameOutcomeFn -- regression test for the gap where normal wins never updated score")
+{
+    // White's b1 knight (id 7, see GameFactory::createClassicBoard's per-column
+    // id assignment) hops to the black king at (0,4) in four capture-ignoring
+    // knight jumps, landing only on empty squares until the final,
+    // king-capturing hop: (7,1)->(5,2)->(4,4)->(2,3)->(0,4). Knights ignore
+    // blocking pieces (KnightRule only checks bounds/friendly-fire), so every
+    // intermediate square just needs to be unoccupied, which rows 2-5 are in
+    // the classic starting position.
+    std::vector<std::pair<int, int>> gameOutcomeCalls;
+
+    GameSession session(
+        "test-session",
+        whitePlayer(),
+        blackPlayer(),
+        [](const std::string&, const std::string&) {},
+        [&](int winnerUserId, int loserUserId)
+        {
+            gameOutcomeCalls.emplace_back(winnerUserId, loserUserId);
+        });
+
+    const std::vector<std::pair<Position, Position>> hops = {
+        {Position(7, 1), Position(5, 2)},
+        {Position(5, 2), Position(4, 4)},
+        {Position(4, 4), Position(2, 3)},
+        {Position(2, 3), Position(0, 4)}, // captures the black king
+    };
+
+    for (std::size_t i = 0; i < hops.size(); ++i)
+    {
+        const GameSession::CommandOutcome outcome = session.requestMove("conn-white", hops[i].first, hops[i].second);
+        CHECK(outcome.accepted == true);
+
+        session.tick(1100); // MILLIS_PER_SQUARE (1000) plus margin -- settles the motion
+        if (i + 1 < hops.size())
+            session.tick(2100); // REST_DURATION_MILLIS (2000) plus margin -- this knight can move again
+    }
+
+    CHECK(session.isGameOver() == true);
+    REQUIRE(gameOutcomeCalls.size() == 1);
+    CHECK(gameOutcomeCalls[0].first == whitePlayer().userId); // winner
+    CHECK(gameOutcomeCalls[0].second == blackPlayer().userId); // loser
 }
 
 TEST_CASE("GameSession stops sending to a disconnected participant and resumes after reconnect")

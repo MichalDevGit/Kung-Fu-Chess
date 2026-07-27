@@ -1,5 +1,8 @@
 #include "tests/doctest.h"
 #include "game/Engine/GameEngine.h"
+#include "common/EventBus/Events.h"
+
+#include <vector>
 
 TEST_CASE("Testing GameEngine flow") {
     // אתחול לוח ומשחק
@@ -45,10 +48,21 @@ TEST_CASE("Testing GameEngine flow") {
         EventBus eventBus;
         GameEngine engine(state, eventBus);
 
+        // Regression coverage for a use-after-free: GameOverEvent::loserColor
+        // must be read from the captured king *before* GameEngine removes it
+        // from the board, not after (see GameEngine::executeMove).
+        std::vector<PieceColor> loserColors;
+        eventBus.subscribe<GameOverEvent>([&](const GameOverEvent& event)
+            {
+                loserColors.push_back(event.loserColor);
+            });
+
         engine.requestMove(Position(6, 4), Position(5, 3));
         engine.advanceTime(1500);
 
         CHECK(engine.getGameState().isGameOver() == true);
+        REQUIRE(loserColors.size() == 1);
+        CHECK(loserColors[0] == PieceColor::Black);
     }
 
     SUBCASE("Pawn promotion") {

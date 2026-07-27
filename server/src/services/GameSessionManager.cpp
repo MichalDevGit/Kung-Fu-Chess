@@ -6,7 +6,7 @@
 
 GameSessionManager::GameSessionManager(GameSession::SendToFn sendTo, UserRepository& userRepository)
     : sendTo(std::move(sendTo))
-    , userRepository(userRepository)
+    , ratingService(userRepository)
 {
 }
 
@@ -16,10 +16,10 @@ GameSession& GameSessionManager::createSession(GameSession::Player white, GameSe
 
     const std::string sessionId = "session-" + std::to_string(nextSessionNumber++);
 
-    UserRepository& users = userRepository;
-    auto scoreUpdate = [&users](int userId, int delta)
+    RatingService& rating = ratingService;
+    auto gameOutcome = [&rating](int winnerUserId, int loserUserId)
     {
-        users.updateScore(userId, delta);
+        rating.applyGameResult(winnerUserId, loserUserId);
     };
 
     const std::string whiteConnectionId = white.connectionId;
@@ -27,7 +27,7 @@ GameSession& GameSessionManager::createSession(GameSession::Player white, GameSe
     const int whiteUserId = white.userId;
     const int blackUserId = black.userId;
 
-    auto session = std::make_unique<GameSession>(sessionId, std::move(white), std::move(black), sendTo, scoreUpdate);
+    auto session = std::make_unique<GameSession>(sessionId, std::move(white), std::move(black), sendTo, gameOutcome);
     GameSession& ref = *session;
     sessions.emplace(sessionId, std::move(session));
 

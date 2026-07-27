@@ -16,10 +16,6 @@ namespace MatchmakingConfig
     // How long a disconnected participant's opponent waits before the game
     // is forfeited in their favor.
     constexpr long long RECONNECT_GRACE_MILLIS = 30000;
-
-    // Flat score adjustment on game-over -- no ELO-style math, deliberately.
-    constexpr int SCORE_DELTA_WIN = 10;
-    constexpr int SCORE_DELTA_LOSS = -10;
 }
 
 #endif

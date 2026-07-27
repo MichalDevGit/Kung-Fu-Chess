@@ -19,6 +19,47 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SQLiteCpp)
 
+# bcrypt (vendored source only -- its own CMakeLists.txt targets GCC/make
+# with a GNU-assembler .S file and won't configure under the MSVC generator
+# this project builds with, so FetchContent_Populate fetches the sources
+# without ever running that CMakeLists.txt; the bcrypt_vendor target below is
+# our own, hand-written to build cleanly on MSVC). Pinned by commit since this
+# fork has no tags. x86.S is deliberately excluded from bcrypt_vendor's
+# sources: crypt_blowfish.c only takes its asm path under "#ifdef __i386__",
+# a GCC-only macro MSVC never defines, so the portable C path is always used
+# here regardless.
+FetchContent_Declare(
+    bcrypt
+    GIT_REPOSITORY https://github.com/ZoneMinder/libbcrypt.git
+    GIT_TAG        be171cd75dd65e06315a67c7dcdb8e1bbc1dabd4
+)
+FetchContent_GetProperties(bcrypt)
+if(NOT bcrypt_POPULATED)
+    FetchContent_Populate(bcrypt)
+endif()
+
+add_library(bcrypt_vendor STATIC
+    ${bcrypt_SOURCE_DIR}/src/bcrypt.c
+    ${bcrypt_SOURCE_DIR}/src/crypt_blowfish.c
+    ${bcrypt_SOURCE_DIR}/src/crypt_gensalt.c
+    ${bcrypt_SOURCE_DIR}/src/wrapper.c
+)
+target_include_directories(bcrypt_vendor PUBLIC ${bcrypt_SOURCE_DIR}/include)
+if(WIN32)
+    # bcrypt_gensalt's Windows path uses CryptAcquireContext/CryptGenRandom
+    # (wincrypt.h) for salt randomness instead of /dev/urandom.
+    target_link_libraries(bcrypt_vendor PUBLIC Advapi32)
+endif()
+
+# ---- Security library (password hashing -- the only thing that gets to
+# know bcrypt exists at all; see PasswordHasher.h) ----
+file(GLOB SECURITY_SOURCES "src/security/*.cpp")
+file(GLOB SECURITY_HEADERS "src/security/*.h")
+
+add_library(KungFuChessSecurity STATIC ${SECURITY_SOURCES} ${SECURITY_HEADERS})
+target_include_directories(KungFuChessSecurity PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(KungFuChessSecurity PUBLIC bcrypt_vendor)
+
 # ---- Persistence library ----
 file(GLOB PERSISTENCE_SOURCES "src/persistence/*.cpp")
 file(GLOB PERSISTENCE_HEADERS "src/persistence/*.h")
@@ -33,7 +74,7 @@ file(GLOB AUTH_HEADERS "src/services/AuthService.h")
 
 add_library(KungFuChessAuth STATIC ${AUTH_SOURCES} ${AUTH_HEADERS})
 target_include_directories(KungFuChessAuth PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(KungFuChessAuth PUBLIC KungFuChessPersistence)
+target_link_libraries(KungFuChessAuth PUBLIC KungFuChessPersistence KungFuChessSecurity)
 
 # ---- Game engine (authoritative domain logic: model/rules/Engine/Controller/IO) ----
 # Moved here from src/logic/* -- this is now the single source of truth for
@@ -51,15 +92,18 @@ target_link_libraries(KungFuChessGame PUBLIC KungFuChessCommon)
 # Kept as its own target, separate from KungFuChessAuth, even though both
 # live under src/services/ -- a library named "Auth" building GameSession
 # would be a misleading name for what it actually contains.
-file(GLOB GAME_SESSION_SOURCES "src/services/GameSession.cpp" "src/services/GameSessionManager.cpp")
-file(GLOB GAME_SESSION_HEADERS "src/services/GameSession.h" "src/services/GameSessionManager.h")
+file(GLOB GAME_SESSION_SOURCES "src/services/GameSession.cpp" "src/services/GameSessionManager.cpp"
+    "src/services/EloCalculator.cpp" "src/services/RatingService.cpp")
+file(GLOB GAME_SESSION_HEADERS "src/services/GameSession.h" "src/services/GameSessionManager.h"
+    "src/services/EloCalculator.h" "src/services/RatingService.h")
 
 add_library(KungFuChessGameSession STATIC ${GAME_SESSION_SOURCES} ${GAME_SESSION_HEADERS})
 target_include_directories(KungFuChessGameSession PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-# KungFuChessPersistence added for UserRepository -- GameSessionManager takes
-# one directly so it can hand every GameSession it creates a ScoreUpdateFn
-# closing over it (see GameSessionManager::createSession), for forfeit-by-
-# disconnect score deltas.
+# KungFuChessPersistence added for UserRepository -- GameSessionManager owns a
+# RatingService built from one, and hands every GameSession it creates a
+# GameOutcomeFn closing over it (see GameSessionManager::createSession), for
+# both game-ending paths' ELO rating updates (GameSession::forfeitTo and its
+# GameOverEvent subscriber).
 target_link_libraries(KungFuChessGameSession PUBLIC KungFuChessGame KungFuChessProtocol KungFuChessPersistence)
 
 # ---- Network layer (request handlers + the WebSocket server wrapper) ----

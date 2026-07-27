@@ -4,6 +4,8 @@
 #include <mutex>
 #include <string>
 
+#include "security/PasswordHasher.h"
+
 class UserRepository;
 
 namespace auth
@@ -29,6 +31,12 @@ namespace auth
 // mutex because (once wired into WebSocketServer) multiple client
 // connections can call in concurrently, while UserRepository/Database share
 // a single, non-synchronized SQLite connection.
+//
+// Owns the one PasswordHasher used for both directions of credential
+// handling: registerUser hashes before UserRepository ever sees the
+// password, login verifies against whatever hash UserRepository hands back.
+// UserRepository itself never hashes or compares passwords -- that
+// responsibility lives here, not in the persistence layer.
 class AuthService
 {
 public:
@@ -39,6 +47,7 @@ public:
 
 private:
     UserRepository& users;
+    PasswordHasher hasher;
     std::mutex mutex;
 };
 

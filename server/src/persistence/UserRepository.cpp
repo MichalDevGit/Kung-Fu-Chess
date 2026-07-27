@@ -3,6 +3,7 @@
 #include <SQLiteCpp/SQLiteCpp.h>
 
 #include "Database.h"
+#include "../../../common/Config/RatingConfig.h"
 
 namespace
 {
@@ -21,15 +22,16 @@ UserRepository::UserRepository(Database& database)
 {
 }
 
-UserRecord UserRepository::createUser(const std::string& username, const std::string& password)
+UserRecord UserRepository::createUser(const std::string& username, const std::string& passwordHash)
 {
-    SQLite::Statement insert(database.raw(), "INSERT INTO users (username, password) VALUES (?, ?)");
+    SQLite::Statement insert(database.raw(), "INSERT INTO users (username, password, score) VALUES (?, ?, ?)");
     insert.bind(1, username);
-    insert.bind(2, password);
+    insert.bind(2, passwordHash);
+    insert.bind(3, RatingConfig::INITIAL_RATING);
     insert.exec();
 
     const int id = static_cast<int>(database.raw().getLastInsertRowid());
-    return UserRecord{id, username, password, 0};
+    return UserRecord{id, username, passwordHash, RatingConfig::INITIAL_RATING};
 }
 
 std::optional<UserRecord> UserRepository::findByUsername(const std::string& username) const
@@ -54,16 +56,10 @@ std::optional<UserRecord> UserRepository::findById(int id) const
     return rowToRecord(query);
 }
 
-bool UserRepository::verifyPassword(const std::string& username, const std::string& password) const
+void UserRepository::setScore(int userId, int newScore)
 {
-    const std::optional<UserRecord> user = findByUsername(username);
-    return user.has_value() && user->password == password;
-}
-
-void UserRepository::updateScore(int userId, int delta)
-{
-    SQLite::Statement update(database.raw(), "UPDATE users SET score = score + ? WHERE id = ?");
-    update.bind(1, delta);
+    SQLite::Statement update(database.raw(), "UPDATE users SET score = ? WHERE id = ?");
+    update.bind(1, newScore);
     update.bind(2, userId);
     update.exec();
 }

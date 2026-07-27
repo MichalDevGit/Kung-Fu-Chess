@@ -3,6 +3,7 @@
 #include "persistence/Database.h"
 #include "persistence/UserRepository.h"
 #include "services/AuthService.h"
+#include "../../common/Config/RatingConfig.h"
 
 TEST_CASE("Testing AuthService")
 {
@@ -32,7 +33,7 @@ TEST_CASE("Testing AuthService")
         const auth::LoginOutcome outcome = auth.login("carol", "correct-password");
         CHECK(outcome.success);
         CHECK(outcome.userId == registered.userId);
-        CHECK(outcome.score == 0);
+        CHECK(outcome.score == RatingConfig::INITIAL_RATING);
         CHECK(outcome.error.empty());
     }
 

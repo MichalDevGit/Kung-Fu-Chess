@@ -4,6 +4,7 @@
 
 #include "persistence/Database.h"
 #include "persistence/UserRepository.h"
+#include "../../common/Config/RatingConfig.h"
 
 TEST_CASE("Testing UserRepository")
 {
@@ -12,10 +13,14 @@ TEST_CASE("Testing UserRepository")
 
     SUBCASE("createUser then findByUsername/findById round-trip")
     {
-        UserRecord created = repo.createUser("alice", "hunter2");
+        // UserRepository stores whatever credential string it's given --
+        // hashing is AuthService's job (see auth_service_test.cpp), so this
+        // test passes a plain string through unchanged, same as any other
+        // opaque field.
+        UserRecord created = repo.createUser("alice", "already-hashed-value");
         CHECK(created.username == "alice");
-        CHECK(created.password == "hunter2");
-        CHECK(created.score == 0);
+        CHECK(created.password == "already-hashed-value");
+        CHECK(created.score == RatingConfig::INITIAL_RATING);
 
         std::optional<UserRecord> byUsername = repo.findByUsername("alice");
         REQUIRE(byUsername.has_value());
@@ -38,22 +43,14 @@ TEST_CASE("Testing UserRepository")
         CHECK_THROWS_AS(repo.createUser("bob", "pw2"), SQLite::Exception);
     }
 
-    SUBCASE("verifyPassword")
-    {
-        repo.createUser("carol", "correct-password");
-        CHECK(repo.verifyPassword("carol", "correct-password"));
-        CHECK_FALSE(repo.verifyPassword("carol", "wrong-password"));
-        CHECK_FALSE(repo.verifyPassword("nobody", "irrelevant"));
-    }
-
-    SUBCASE("updateScore applies a delta")
+    SUBCASE("setScore sets an absolute value")
     {
         UserRecord user = repo.createUser("dave", "pw");
-        repo.updateScore(user.id, 5);
-        repo.updateScore(user.id, 3);
+        repo.setScore(user.id, 1250);
+        repo.setScore(user.id, 1235);
 
         std::optional<UserRecord> updated = repo.findById(user.id);
         REQUIRE(updated.has_value());
-        CHECK(updated->score == 8);
+        CHECK(updated->score == 1235);
     }
 }

@@ -16,7 +16,7 @@ auth::RegisterOutcome AuthService::registerUser(const std::string& username, con
 
     try
     {
-        const UserRecord created = users.createUser(username, password);
+        const UserRecord created = users.createUser(username, hasher.hash(password));
         return auth::RegisterOutcome{true, created.id, {}};
     }
     catch (const SQLite::Exception&)
@@ -30,10 +30,9 @@ auth::LoginOutcome AuthService::login(const std::string& username, const std::st
 {
     std::lock_guard<std::mutex> lock(mutex);
 
-    if (!users.verifyPassword(username, password))
+    const std::optional<UserRecord> user = users.findByUsername(username);
+    if (!user.has_value() || !hasher.verify(password, user->password))
         return auth::LoginOutcome{false, 0, 0, "invalid_credentials"};
 
-    // verifyPassword just returned true, so the row is guaranteed to exist.
-    const std::optional<UserRecord> user = users.findByUsername(username);
     return auth::LoginOutcome{true, user->id, user->score, {}};
 }

@@ -33,9 +33,12 @@ struct PieceCapturedEvent
 };
 
 // The game has ended (a king was captured). Target: score updates (final),
-// end-of-game animation.
+// end-of-game animation. loserColor is the captured king's color -- lets a
+// subscriber (GameSession) resolve which participant won/lost without this
+// event, or GameEngine, needing to know about players/users at all.
 struct GameOverEvent
 {
+    PieceColor loserColor;
 };
 
 #endif
