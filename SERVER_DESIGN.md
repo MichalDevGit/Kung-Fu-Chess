@@ -2,73 +2,120 @@
 
 ## System Overview
 
-This cloud server architecture is designed to support a massive-scale real-time gaming
-environment capable of handling 100 million registered users, 10 million concurrent
-active players globally, and high-frequency move updates (every 2 seconds per player).
-The system utilizes a distributed, containerized cloud infrastructure to ensure high
-availability, fault tolerance, and seamless scalability.
+This cloud server architecture is designed to support a large-scale real-time gaming
+environment: many registered users, many concurrent active players spread globally, and
+continuous per-piece move/state updates for every in-progress game. The system is built
+as a set of independently deployable, horizontally scalable services rather than a
+single monolithic server process, so that connection handling, matchmaking, and game
+simulation can each be scaled and operated independently.
+
+**Core design principle:** neither the client nor the Gateway ever decides the rules of
+the game. Move/jump requests are opinions, not commands — the `GameEngine` running
+inside a Game Server Shard remains the single source of truth for game state, exactly as
+it is today in the existing codebase.
 
 ## Key Architectural Components
 
-### Global Load Balancer
+### API Gateway
 
-- **Function:** Acts as the primary entry point for all incoming client connections
-  from around the world. It distributes incoming WebSocket traffic evenly across
-  multiple regional server instances and routes players to the nearest available
-  server to minimize network latency.
-- **Problems Solved:** Prevents single-point bottlenecks at the network entry layer,
-  distributes global traffic efficiently, and ensures high availability through
-  redundant routing.
+- **Function:** The entry point for all non-real-time client requests — registration,
+  login, room/game lookup, and historical results. Issues the identity/session token a
+  client then presents to the WebSocket Gateway.
+- **Problems Solved:** Keeps request/response traffic (which doesn't need a persistent
+  connection) off the WebSocket tier, and gives the system one place to enforce auth
+  before a client ever reaches a live game connection.
 
-### Hybrid Application Server Instances (Docker Containers & Multi-threading)
+### WebSocket Gateway
 
-- **Function:** The core game server code is containerized using Docker, allowing it
-  to run as identical, scalable replicas across multiple physical cloud nodes. Within
-  each Docker container, an asynchronous multi-threading model handles concurrent
-  client connections and local room logic.
-- **Problems Solved:** Isolates faults so that a crash in one container does not
-  affect players on other servers; optimizes CPU core utilization via multi-threading;
-  and avoids the high networking latency and architectural complexity of
-  fine-grained microservices.
+- **Function:** Accepts and holds the persistent WebSocket connection for every
+  connected client, authenticates it against the token issued by the API Gateway, and
+  routes each client's `move`/`jump` traffic to whichever Game Server Shard currently
+  owns that client's session. Also relays the shard's outbound state pushes back down
+  the same connection.
+- **Problems Solved:** Decouples "how many open sockets can we hold" from "how many
+  games can we simulate," so each can scale independently; lets a client reconnect
+  through any gateway instance rather than being pinned to one process that also runs
+  game logic.
 
-### Kubernetes (Orchestration & Auto-Scaling)
+### Matchmaker
 
-- **Function:** Acts as the automated manager for all Docker containers, monitoring
-  resource usage and container health in real-time.
-- **Problems Solved:** Automates auto-scaling by spinning up new server instances
-  during traffic spikes and scaling them down when load decreases; provides
-  self-healing capabilities by instantly replacing crashed containers; and handles
-  zero-downtime rolling updates.
+- **Function:** A shared, gateway-agnostic queue of players waiting for a game, pairing
+  entries by score proximity and queue order, backed by a store all Matchmaker instances
+  can see (see Redis below), not by any one process's local memory.
+- **Problems Solved:** Lets matchmaking keep working correctly no matter which gateway
+  or node a given player's `find_game` request happened to land on.
 
-### Redis (In-Memory Data Store & Matchmaking Queue)
+### Game Allocator
 
-- **Function:** A high-speed, in-memory database acting as a centralized
-  synchronization layer for all server instances. It manages the matchmaking queue,
-  active room states, and temporary player data.
-- **Problems Solved:** Overcomes the isolation barrier between different Docker
-  containers, enabling all server instances to share a unified, real-time view of
-  player queues and active game sessions without hitting slower disk storage.
+- **Function:** Once the Matchmaker produces a pair, the Game Allocator decides which
+  Game Server Shard will host that match (based on current shard load/capacity), creates
+  the session there, and informs the WebSocket Gateway(s) serving both players where to
+  route their traffic.
+- **Problems Solved:** Separates "who plays whom" (Matchmaker's job) from "which physical
+  server runs the simulation" (this component's job), enabling load-aware placement and
+  making it possible to add/remove shard capacity without touching matchmaking logic.
 
-### PostgreSQL with Write Queuing (Primary Database)
+### Game Server Shards
 
-- **Function:** The long-term relational data store for registered user profiles and
-  historical scores, paired with a fast message queue for write operations.
-- **Problems Solved:** Prevents database lockups and mutex bottlenecks under massive
-  write loads. By offloading non-critical updates to a temporary queue, the system
-  maintains high availability and smooth gameplay performance while eventual
-  consistency ensures data is safely written to the main database.
+- **Function:** Each shard runs some number of independent, authoritative game sessions
+  — the `GameEngine`/`Controller`/rules simulation — exactly as `GameSession` does today,
+  advancing each game's real-time clock on its own tick and publishing state changes for
+  the WebSocket Gateway to push to the two participants.
+- **Problems Solved:** Isolates game simulation load from connection-handling load;
+  a crash or restart of one shard only affects the games it was hosting, not the whole
+  fleet; shards can be added or removed to match simulation demand independently of
+  gateway/connection capacity.
+
+### Observability
+
+- **Function:** Centralized logging, metrics, and health checks across every service
+  (API Gateway, WebSocket Gateway, Matchmaker, Game Allocator, Game Server Shards), plus
+  load testing to validate capacity assumptions before they're needed in production.
+- **Problems Solved:** Gives operators a single place to see the health and load of every
+  moving part, and to catch regressions or capacity limits before players do.
+
+## Recommended Technologies
+
+1. **NATS / Redis Pub-Sub** — internal, low-latency communication between services (e.g.
+   Matchmaker → Game Allocator match notifications, shard → gateway routing updates).
+2. **Redis** — temporary, shared state: active sessions, matchmaking queue, reconnect
+   windows, gateway-to-shard routing table. Replaces today's in-process-only
+   `ConnectionRegistry`/`Matchmaker`/session indexes so every service instance sees the
+   same state.
+3. **PostgreSQL** — permanent data: user accounts, historical scores/ratings, completed
+   game results, move history.
+4. **Docker Compose** — running a full local instance of every service together, for
+   development and integration testing.
+5. **Kubernetes / K3s** — running and scaling all services in a managed way in
+   production, with self-healing and rolling updates.
 
 ## Resiliency and Fault Tolerance
 
 ### Graceful Disconnections and Reconnection Windows
 
-If a player's internet connection drops momentarily, the server grants a grace period
-(e.g., 10 seconds). The player can reconnect through the load balancer to a new
-container, and their game session is restored seamlessly using the centralized Redis
-state.
+If a player's connection drops, the WebSocket Gateway grants a grace period (e.g., 10
+seconds) before the owning Game Server Shard forfeits the game. The player can reconnect
+through any WebSocket Gateway instance — not necessarily the one they started on — and,
+using the shared Redis routing/session state, be reattached to the same in-progress
+session on the same shard.
 
-### Master-Replica Database and Container Redundancy
+### Master-Replica Redis and Service Redundancy
 
-Redis operates in a Master-Replica configuration to ensure that if a primary memory
-node fails, a backup node takes over instantly. Similarly, container failures are
-automatically mitigated by Kubernetes spinning up fresh instances within seconds.
+Redis operates in a Master-Replica configuration so a primary node failure fails over to
+a replica without losing matchmaking/session state. Every service (API Gateway,
+WebSocket Gateway, Matchmaker, Game Allocator, Game Server Shards) runs as multiple
+replicas behind Kubernetes, which replaces any crashed instance automatically; a crashed
+Game Server Shard's in-flight sessions are the one exception that requires explicit
+handling (see below), since simulation state currently lives only in that shard's
+memory.
+
+## Known Gaps Against the Current Codebase
+
+This design is not yet implemented. The existing server (`KungFuChessServer`) is a
+single process combining today's equivalent of the API Gateway, WebSocket Gateway,
+Matchmaker, and Game Server Shard into one address space, with all matchmaking/session/
+connection state held in local in-memory containers and no Redis, NATS, PostgreSQL,
+Docker, or Kubernetes usage anywhere yet. In particular, a Game Server Shard crash today
+loses every session it was hosting outright — there is no session snapshotting to Redis
+or PostgreSQL to recover from, and that remains open work even after the service split
+above is implemented.
