@@ -6,7 +6,7 @@
 
 #include "security/PasswordHasher.h"
 
-class UserRepository;
+class IUserRepository;
 
 namespace auth
 {
@@ -26,27 +26,28 @@ namespace auth
     };
 }
 
-// Thin, networking-agnostic wrapper around UserRepository -- the only new
+// Thin, networking-agnostic wrapper around IUserRepository -- the only new
 // DB-touching logic added for the WebSocket layer. Guards every call with a
 // mutex because (once wired into WebSocketServer) multiple client
-// connections can call in concurrently, while UserRepository/Database share
-// a single, non-synchronized SQLite connection.
+// connections can call in concurrently. Depends only on the IUserRepository
+// interface, never a concrete backend -- see server/src/persistence/
+// RepositoryFactory for how one gets constructed.
 //
 // Owns the one PasswordHasher used for both directions of credential
-// handling: registerUser hashes before UserRepository ever sees the
-// password, login verifies against whatever hash UserRepository hands back.
-// UserRepository itself never hashes or compares passwords -- that
+// handling: registerUser hashes before the repository ever sees the
+// password, login verifies against whatever hash the repository hands back.
+// The repository itself never hashes or compares passwords -- that
 // responsibility lives here, not in the persistence layer.
 class AuthService
 {
 public:
-    explicit AuthService(UserRepository& users);
+    explicit AuthService(IUserRepository& users);
 
     auth::RegisterOutcome registerUser(const std::string& username, const std::string& password);
     auth::LoginOutcome login(const std::string& username, const std::string& password);
 
 private:
-    UserRepository& users;
+    IUserRepository& users;
     PasswordHasher hasher;
     std::mutex mutex;
 };

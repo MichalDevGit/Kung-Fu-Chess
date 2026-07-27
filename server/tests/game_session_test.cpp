@@ -1,8 +1,7 @@
 #include "tests/doctest.h"
 #include "services/GameSession.h"
 #include "services/GameSessionManager.h"
-#include "persistence/Database.h"
-#include "persistence/UserRepository.h"
+#include "persistence/InMemoryUserRepository.h"
 
 #include <algorithm>
 #include <string>
@@ -20,16 +19,6 @@ GameSession::Player blackPlayer()
 {
     return GameSession::Player{2, "bob", "conn-black"};
 }
-
-// Real UserRepository backed by an in-memory SQLite DB -- GameSessionManager
-// needs one to build the RatingService its GameOutcomeFn closes over (see
-// GameSessionManager::createSession); tests don't care about the persisted
-// rows, only that construction/forfeit rating calls don't crash.
-struct TestUserRepository
-{
-    Database database{":memory:"};
-    UserRepository users{database};
-};
 }
 
 TEST_CASE("GameSession sends a GameStartedMessage to both participants as soon as it's constructed")
@@ -212,8 +201,8 @@ TEST_CASE("GameSession stops sending to a disconnected participant and resumes a
 
 TEST_CASE("GameSessionManager::createSession assigns distinct session ids and indexes both connections/users")
 {
-    TestUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo.users);
+    InMemoryUserRepository repo;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
 
     GameSession& session = manager.createSession(whitePlayer(), blackPlayer());
 
@@ -226,7 +215,7 @@ TEST_CASE("GameSessionManager::createSession assigns distinct session ids and in
 
 TEST_CASE("GameSessionManager::tickAll advances every session's clock")
 {
-    TestUserRepository repo;
+    InMemoryUserRepository repo;
     std::vector<std::string> sent;
 
     GameSessionManager manager(
@@ -234,7 +223,7 @@ TEST_CASE("GameSessionManager::tickAll advances every session's clock")
         {
             sent.push_back(json);
         },
-        repo.users);
+        repo);
 
     GameSession& session = manager.createSession(whitePlayer(), blackPlayer());
     session.requestMove("conn-white", Position(6, 4), Position(5, 4));
@@ -250,12 +239,12 @@ TEST_CASE("GameSessionManager::tickAll advances every session's clock")
 
 TEST_CASE("GameSessionManager::onConnectionClosed marks the right session's participant disconnected and drops the connection route")
 {
-    TestUserRepository repo;
+    InMemoryUserRepository repo;
     std::vector<std::string> sent;
 
     GameSessionManager manager(
         [&](const std::string&, const std::string& json) { sent.push_back(json); },
-        repo.users);
+        repo);
 
     manager.createSession(whitePlayer(), blackPlayer());
     sent.clear();
@@ -277,12 +266,12 @@ TEST_CASE("A session does not forfeit immediately on disconnect -- only after th
     // real grace period isn't something a fast unit test should wait for;
     // this test instead guards against the more likely regression, a
     // forfeit firing immediately (or on the very next tick) after a drop.
-    TestUserRepository repo;
+    InMemoryUserRepository repo;
     std::vector<std::string> sent;
 
     GameSessionManager manager(
         [&](const std::string&, const std::string& json) { sent.push_back(json); },
-        repo.users);
+        repo);
 
     manager.createSession(whitePlayer(), blackPlayer());
     manager.onConnectionClosed("conn-black");
@@ -298,8 +287,8 @@ TEST_CASE("A session does not forfeit immediately on disconnect -- only after th
 
 TEST_CASE("GameSessionManager::rebindConnection moves a session's connection index to the new connection")
 {
-    TestUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo.users);
+    InMemoryUserRepository repo;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
 
     GameSession& session = manager.createSession(whitePlayer(), blackPlayer());
 

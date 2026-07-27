@@ -1,11 +1,10 @@
 #include "services/AuthService.h"
 
-#include <SQLiteCpp/SQLiteCpp.h>
-
+#include "persistence/IUserRepository.h"
 #include "persistence/UserRecord.h"
-#include "persistence/UserRepository.h"
+#include "persistence/UserRepositoryExceptions.h"
 
-AuthService::AuthService(UserRepository& users)
+AuthService::AuthService(IUserRepository& users)
     : users(users)
 {
 }
@@ -19,9 +18,8 @@ auth::RegisterOutcome AuthService::registerUser(const std::string& username, con
         const UserRecord created = users.createUser(username, hasher.hash(password));
         return auth::RegisterOutcome{true, created.id, {}};
     }
-    catch (const SQLite::Exception&)
+    catch (const DuplicateUsernameException&)
     {
-        // The UNIQUE constraint on username is the only expected failure mode here.
         return auth::RegisterOutcome{false, 0, "username_taken"};
     }
 }

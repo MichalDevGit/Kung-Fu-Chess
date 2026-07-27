@@ -5,7 +5,7 @@
 // two current ratings and who won, returns both parties' new ratings. Kept
 // entirely separate from RatingService (which knows how to read/persist a
 // rating) so the arithmetic itself stays trivially unit-testable and free of
-// any UserRepository dependency.
+// any IUserRepository dependency.
 class EloCalculator
 {
 public:

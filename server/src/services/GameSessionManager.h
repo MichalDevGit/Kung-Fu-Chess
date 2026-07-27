@@ -9,7 +9,7 @@
 #include "GameSession.h"
 #include "RatingService.h"
 
-class UserRepository;
+class IUserRepository;
 
 // Owns every active GameSession, keyed by session id, plus the reverse
 // indexes (connectionId -> sessionId, userId -> sessionId) that let a
@@ -35,7 +35,7 @@ public:
     // GameOutcomeFn closes over, for ELO rating updates on either
     // game-ending path (see GameSession::forfeitTo and its GameOverEvent
     // subscriber).
-    GameSessionManager(GameSession::SendToFn sendTo, UserRepository& userRepository);
+    GameSessionManager(GameSession::SendToFn sendTo, IUserRepository& userRepository);
 
     GameSession& createSession(GameSession::Player white, GameSession::Player black);
 

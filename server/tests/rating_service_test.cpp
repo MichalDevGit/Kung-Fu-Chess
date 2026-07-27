@@ -2,13 +2,11 @@
 
 #include "services/RatingService.h"
 #include "services/EloCalculator.h"
-#include "persistence/Database.h"
-#include "persistence/UserRepository.h"
+#include "persistence/InMemoryUserRepository.h"
 
 TEST_CASE("Testing RatingService")
 {
-    Database db(":memory:");
-    UserRepository users(db);
+    InMemoryUserRepository users;
     RatingService rating(users);
 
     SUBCASE("applyGameResult persists both players' post-game ELO ratings")

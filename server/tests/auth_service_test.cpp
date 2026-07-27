@@ -1,14 +1,12 @@
 #include "tests/doctest.h"
 
-#include "persistence/Database.h"
-#include "persistence/UserRepository.h"
+#include "persistence/InMemoryUserRepository.h"
 #include "services/AuthService.h"
 #include "../../common/Config/RatingConfig.h"
 
 TEST_CASE("Testing AuthService")
 {
-    Database db(":memory:");
-    UserRepository repo(db);
+    InMemoryUserRepository repo;
     AuthService auth(repo);
 
     SUBCASE("registerUser succeeds for a new username")

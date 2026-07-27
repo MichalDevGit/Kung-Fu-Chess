@@ -8,6 +8,7 @@
 // independent of whether any client happens to be connected right now.
 #include <chrono>
 #include <iostream>
+#include <memory>
 #include <thread>
 
 #include <nlohmann/json.hpp>
@@ -16,8 +17,8 @@
 #include "handlers/GameRequestHandler.h"
 #include "handlers/MatchmakingRequestHandler.h"
 #include "network/WebSocketServer.h"
-#include "persistence/Database.h"
-#include "persistence/UserRepository.h"
+#include "persistence/IUserRepository.h"
+#include "persistence/RepositoryFactory.h"
 #include "services/AuthService.h"
 #include "services/ConnectionRegistry.h"
 #include "services/GameSessionManager.h"
@@ -102,9 +103,9 @@ void runTickLoop(GameSessionManager& sessionManager, Matchmaker& matchmaker, Web
 int main()
 {
     const std::string dbPath = "kungfuchess.db";
-    Database database(dbPath);
-    UserRepository users(database);
-    AuthService authService(users);
+    std::unique_ptr<IUserRepository> users =
+        RepositoryFactory::createUserRepository(RepositoryBackend::Sqlite, dbPath);
+    AuthService authService(*users);
     ConnectionRegistry connectionRegistry;
     Matchmaker matchmaker;
 
@@ -119,7 +120,7 @@ int main()
         {
             server.sendTo(connectionId, json);
         },
-        users);
+        *users);
 
     // Needs sessionManager (to detect/resume a reconnecting player's
     // existing session on login -- see the class comment) and a way to push

@@ -6,9 +6,32 @@ eventually look. Read this before exploring the source tree — it should make a
 re-read of the sources unnecessary for most tasks. If you change the architecture in a
 way that makes a section below wrong, update that section in the same change.
 
-Last reviewed: 2026-07-27, against the source tree as of the bcrypt-hashed-passwords +
+Last reviewed: 2026-07-27, against the source tree as of the user-persistence
+repository-pattern refactor, layered on top of the bcrypt/ELO change described below.
+That refactor: `server/src/persistence/UserRepository` (the single concrete class every
+consumer named directly) was replaced with `IUserRepository` (a pure abstract interface —
+`createUser`/`findByUsername`/`findById`/`setScore`, see `server/src/persistence/
+IUserRepository.h`) plus two implementations of it: `SqliteUserRepository` (the renamed
+former `UserRepository`, now owning its own `Database` internally instead of taking one by
+reference, so it's the only class that still knows SQLite exists at all) and
+`InMemoryUserRepository` (new — a dependency-free `std::unordered_map`-backed double,
+added specifically to prove the interface is real and not just theater, and to replace
+the `Database(":memory:")`-backed `TestUserRepository` boilerplate three test files used
+to duplicate). `server/src/persistence/RepositoryFactory::createUserRepository(
+RepositoryBackend, sqliteDbPath)` is the one place that knows both backends exist and
+constructs whichever one is asked for — `server/main.cpp` calls it once with
+`RepositoryBackend::Sqlite`, and that's the only place "which backend" is decided.
+`AuthService`, `RatingService`, and `GameSessionManager` now all depend on
+`IUserRepository&`, never a concrete class; `AuthService::registerUser` used to catch
+`SQLite::Exception` directly to detect a duplicate username (a real SQLite leak into
+business logic) and now catches a new backend-agnostic `DuplicateUsernameException`
+(`server/src/persistence/UserRepositoryExceptions.h`) that every implementation throws
+instead. See "Server / persistence / networking layer" below for the current shape of
+this layer.
+
+Previously reviewed against the source tree as of the bcrypt-hashed-passwords +
 ELO-rating change, layered on top of the auth-gated matchmaking change described below.
-That later change: (a) `server/src/security/PasswordHasher` wraps a vendored bcrypt
+That earlier change: (a) `server/src/security/PasswordHasher` wraps a vendored bcrypt
 implementation (`bcrypt_vendor`, source-fetched via `FetchContent_Populate` in
 `server/CMakeLists.txt` since its own build system targets GCC/make, not MSVC) behind a
 two-method `hash`/`verify` interface, with `AuthService` now the only thing that calls
@@ -100,13 +123,15 @@ of scope (TLS, session persistence across a server restart, spectators, resign/d
     (doctest, message round-trip serialization) `-> KungFuChessProtocol` only —
     deliberately not `KungFuChessGame`, see "DTO layer" below for why that separation
     matters and how it's kept true.
-  - `server/`: `KungFuChessPersistence` (STATIC, SQLite) `-> SQLiteCpp` ->
+  - `server/`: `KungFuChessPersistence` (STATIC — `IUserRepository`/`SqliteUserRepository`/
+    `InMemoryUserRepository`/`RepositoryFactory`; only `SqliteUserRepository.cpp` actually
+    touches SQLite) `-> SQLiteCpp` ->
     `KungFuChessAuth` (STATIC, `services/AuthService.cpp` only) `-> KungFuChessPersistence`;
     `KungFuChessGame` (STATIC, all of `src/game/` — model/rules/Engine/Controller/IO)
     `-> KungFuChessCommon`; `KungFuChessGameSession` (STATIC,
     `services/GameSession.cpp`+`GameSessionManager.cpp` — kept separate from
     `KungFuChessAuth` on purpose, see below) `-> KungFuChessGame, KungFuChessProtocol,
-    KungFuChessPersistence` (the last one added for `UserRepository`, which
+    KungFuChessPersistence` (the last one added for `IUserRepository`, which
     `GameSessionManager` now takes directly to build every session's forfeit-score
     callback — see "Server / persistence / networking layer" below);
     `KungFuChessNetwork` (STATIC, `handlers/`+`network/`+`services/ConnectionRegistry.cpp`+
@@ -159,7 +184,7 @@ server/src/game/*       <-- the authoritative domain simulation, depends only on
   model, rules, Engine, Controller, IO   (moved verbatim from src/logic/*, see below)
         ^
 server: GameSession, GameSessionManager   <-- depends on game/ + protocol/ + persistence/
-        ^ (UserRepository, for forfeit score deltas)
+        ^ (IUserRepository, for forfeit score deltas)
 server: ConnectionRegistry, Matchmaker, AuthRequestHandler, MatchmakingRequestHandler,
         GameRequestHandler   <-- depends on the above + auth/ + persistence/
         ^
@@ -523,14 +548,16 @@ doctest framework (single header, vendored as its own copy in each of
 as separate copies rather than a shared location, since each is an independent build
 target and this is a vendored single-header third-party file, not project code).
 
-- `server/tests/` — `auth_service_test.cpp`, `user_repository_test.cpp` (persistence/
-  auth, no sockets); `game_session_test.cpp` (construction pushes to both participants
-  by connection id, `not_your_piece`/`unknown_connection` rejection, per-tick pushes,
-  disconnect suppresses sends to that slot only, reconnect resumes them, `tickAll`,
-  `rebindConnection`) and `game_request_handler_test.cpp` (connection-scoped `move`/
-  `jump` dispatch including `no_active_game`/`not_your_piece` errors) — both use a real
-  `Database(":memory:")`-backed `UserRepository` now, since `GameSessionManager`
-  requires one; `matchmaker_test.cpp` (new — score-range pairing, earliest-queued-first
+- `server/tests/` — `auth_service_test.cpp`, `sqlite_user_repository_test.cpp` (SQLite
+  implementation, no sockets), `in_memory_user_repository_test.cpp` (same contract
+  coverage against the in-memory implementation — see "Server / persistence /
+  networking layer" below); `game_session_test.cpp` (construction pushes to both
+  participants by connection id, `not_your_piece`/`unknown_connection` rejection,
+  per-tick pushes, disconnect suppresses sends to that slot only, reconnect resumes
+  them, `tickAll`, `rebindConnection`) and `game_request_handler_test.cpp`
+  (connection-scoped `move`/`jump` dispatch including `no_active_game`/`not_your_piece`
+  errors) — both use a plain `InMemoryUserRepository` now, since `GameSessionManager`
+  requires an `IUserRepository&`; `matchmaker_test.cpp` (new — score-range pairing, earliest-queued-first
   ordering, `MAX_WAIT_MILLIS` timeout, idempotent `enqueue`); `common_tests/` (
   `EventBus`/`PieceStateToString`/`TimeProgress`); and `game_tests/` (mirrors
   `server/src/game/{model,rules,Engine,Controller,IO}`, same one-`TEST_CASE`-per-class/
@@ -592,8 +619,15 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
 
 ### `server/` — persistence + matchmaking + game engine + WebSocket networking
 
-- `server/src/persistence/*` — `UserRecord`, `Database`, `UserRepository`.
-  `UserRepository` is deliberately ignorant of hashing: `createUser(username,
+- `server/src/persistence/*` — the repository-pattern layer: `UserRecord` (plain row
+  DTO), `IUserRepository` (the interface every consumer depends on: `createUser`/
+  `findByUsername`/`findById`/`setScore`), `UserRepositoryExceptions.h`
+  (`DuplicateUsernameException`, thrown by `createUser` on a duplicate username --
+  backend-agnostic on purpose, so callers never need to catch a SQLite-specific type),
+  two implementations (`SqliteUserRepository`, `InMemoryUserRepository`), and
+  `RepositoryFactory::createUserRepository(RepositoryBackend, sqliteDbPath)` — the one
+  place that knows both backends exist and builds whichever one is asked for.
+  `IUserRepository` is deliberately ignorant of hashing: `createUser(username,
   passwordHash)` stores whatever credential string it's given (hashing is
   `AuthService`'s job, see below), and new users start at
   `RatingConfig::INITIAL_RATING` (an explicit insert value, not the schema's inert
@@ -601,6 +635,21 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
   (relative delta) is gone too, replaced by `setScore(userId, newScore)` (absolute --
   what an ELO update needs), called from `RatingService` (see below), which is in turn
   what every `GameSession`'s `GameOutcomeFn` closes over.
+  - `Database` (unchanged in content) is no longer constructed anywhere outside
+    `SqliteUserRepository.cpp` — `SqliteUserRepository` owns one internally (built from
+    the `dbPath` string passed to its constructor) instead of taking one by reference,
+    so it's the only class in the codebase that still includes `<SQLiteCpp/SQLiteCpp.h>`
+    or knows a `SQLite::Statement` exists.
+  - `InMemoryUserRepository` — a `std::unordered_map<int, UserRecord>` + its own
+    `std::mutex` (guards the map itself, since nothing else does for this
+    implementation), no SQLite/file/network dependency at all. Exists both as a fast
+    test double (see "Testing" above) and as concrete proof `IUserRepository` really
+    decouples business logic from SQLite, not just in theory.
+  - `RepositoryFactory` is the single call site (`server/main.cpp`) that decides
+    `RepositoryBackend::Sqlite` vs. `RepositoryBackend::InMemory` today — adding a third
+    backend later means one new enum value plus one new `case` there, no changes to
+    `AuthService`/`RatingService`/`GameSessionManager`, all of which only ever see
+    `IUserRepository&`.
 - `server/src/security/PasswordHasher` — **new**. The only class that knows a hashing
   algorithm exists: `hash(plaintext)`/`verify(plaintext, storedHash)`, wrapping a
   vendored bcrypt (`bcrypt_vendor` target in `server/CMakeLists.txt` -- fetched by
@@ -613,12 +662,15 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
   `server/src/security/SecurityConfig.h` (`BCRYPT_COST_FACTOR`), not hardcoded inside
   `PasswordHasher.cpp`.
 - `server/src/services/AuthService` — thin, networking-agnostic wrapper around
-  `UserRepository`, its own mutex (shared SQLite connection, called concurrently once
-  wired into `WebSocketServer`). Now also owns the one `PasswordHasher` used for both
-  directions of credential handling: `registerUser` hashes before `UserRepository` ever
-  sees the password; `login` verifies the stored hash against what `UserRepository`
-  hands back. This is the seam where "hashing" and "persistence" are kept separate --
-  `UserRepository` never hashes or compares passwords itself.
+  `IUserRepository&` (never a concrete backend), its own mutex (multiple client
+  connections can call in concurrently once wired into `WebSocketServer`). Now also owns
+  the one `PasswordHasher` used for both directions of credential handling:
+  `registerUser` hashes before the repository ever sees the password; `login` verifies
+  the stored hash against what the repository hands back. This is the seam where
+  "hashing" and "persistence" are kept separate -- the repository never hashes or
+  compares passwords itself. `registerUser` catches `DuplicateUsernameException` (not
+  `SQLite::Exception` -- see `server/src/persistence/*` above) to detect a duplicate
+  username, so this class has no SQLite-specific code or `#include` at all.
 - `server/src/services/ConnectionRegistry` — **new**. Mutex-guarded `connectionId ->
   {userId, username, score}` (plus the reverse `userId -> connectionId`), populated
   only by `AuthRequestHandler` on a successful `login` (`register` never authenticates
@@ -688,19 +740,19 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
   (which also drops that connection's index entry, so a stale route can never linger)
   wire reconnect/disconnect through to the right `GameSession`. `tickAll` now also
   removes any session `isFinished()` reports, along with its index entries. Constructed
-  with a `SendToFn` (shared by every session it creates) and a `UserRepository&`, from
+  with a `SendToFn` (shared by every session it creates) and an `IUserRepository&`, from
   which it builds one `RatingService` member (see below) that every session it creates
   gets a `GameOutcomeFn` closing over.
 - `server/src/services/EloCalculator` — **new**. Pure, stateless ELO math (no DB, no
   networking, no locking): `applyResult(ratingWinner, ratingLoser) -> Outcome{
   newWinnerRating, newLoserRating}`, using the standard logistic expected-score curve
   and `common/Config/RatingConfig::K_FACTOR`. Deliberately separate from
-  `RatingService` so the arithmetic itself stays trivially unit-testable without a
-  `UserRepository` in the loop.
+  `RatingService` so the arithmetic itself stays trivially unit-testable without an
+  `IUserRepository` in the loop.
 - `server/src/services/RatingService` — **new**. The single place that turns "who won"
   into "what changed in the DB": `applyGameResult(winnerUserId, loserUserId)` reads both
-  users' current ratings via `UserRepository::findById`, computes new ones via
-  `EloCalculator`, and persists both via `UserRepository::setScore`. This is what
+  users' current ratings via `IUserRepository::findById`, computes new ones via
+  `EloCalculator`, and persists both via `IUserRepository::setScore`. This is what
   replaced the old flat `MatchmakingConfig::SCORE_DELTA_WIN`/`_LOSS`, and — since both
   `GameSession::forfeitTo` and its `GameOverEvent` subscriber call the same
   `GameOutcomeFn` (see above) — the only rating-update code path in the whole system,
@@ -865,7 +917,8 @@ both implemented now — see "Server / persistence / networking layer" above.)
 | Change how pixel clicks map to board cells | `client/src/game/BoardMapper.cpp`, fed via `GameClient::handlePixelClick`/`handlePixelJump` |
 | Add/adjust server-side domain tests | `server/tests/game_tests/<matching-folder>/`, `server/tests/common_tests/` |
 | Add a new event / subscribe to a game event | `common/EventBus/Events.h` (new event struct), publisher call sites in `server/src/game/Engine/GameEngine.cpp`, subscriber wiring in `server/src/services/GameSession.cpp` (`subscribeToEvents`) |
-| Change the `users` table / user persistence | `server/src/persistence/Database.cpp` (schema), `server/src/persistence/UserRepository.cpp`; tests in `server/tests/user_repository_test.cpp` |
+| Change the `users` table / user persistence | `server/src/persistence/Database.cpp` (schema), `server/src/persistence/SqliteUserRepository.cpp` (SQLite impl), `server/src/persistence/InMemoryUserRepository.cpp` (in-memory impl); tests in `server/tests/sqlite_user_repository_test.cpp`/`in_memory_user_repository_test.cpp` |
+| Add a new user-persistence backend | `server/src/persistence/IUserRepository.h` (implement the interface), `server/src/persistence/RepositoryFactory.cpp` (add a `RepositoryBackend` value + `case`) |
 | Change password hashing (cost factor, algorithm) | `server/src/security/SecurityConfig.h`, `server/src/security/PasswordHasher.cpp`; tests in `server/tests/password_hasher_test.cpp` |
 | Change register/login business logic (not the DB rows) | `server/src/services/AuthService.cpp`; tests in `server/tests/auth_service_test.cpp` |
 | Change game-session hosting, tick behavior, or session lookup | `server/src/services/GameSession.cpp`/`GameSessionManager.cpp`; tests in `server/tests/game_session_test.cpp` |

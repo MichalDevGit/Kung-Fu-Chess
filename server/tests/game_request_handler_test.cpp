@@ -1,20 +1,13 @@
 #include "tests/doctest.h"
 #include "handlers/GameRequestHandler.h"
 #include "services/GameSessionManager.h"
-#include "persistence/Database.h"
-#include "persistence/UserRepository.h"
+#include "persistence/InMemoryUserRepository.h"
 
 #include <nlohmann/json.hpp>
 #include <string>
 
 namespace
 {
-struct TestUserRepository
-{
-    Database database{":memory:"};
-    UserRepository users{database};
-};
-
 GameSession::Player whitePlayer()
 {
     return GameSession::Player{1, "alice", "conn-white"};
@@ -28,8 +21,8 @@ GameSession::Player blackPlayer()
 
 TEST_CASE("GameRequestHandler handles move for the requester's own piece and returns a fresh GameView snapshot")
 {
-    TestUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo.users);
+    InMemoryUserRepository repo;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
     manager.createSession(whitePlayer(), blackPlayer());
     GameRequestHandler handler(manager);
 
@@ -43,8 +36,8 @@ TEST_CASE("GameRequestHandler handles move for the requester's own piece and ret
 
 TEST_CASE("GameRequestHandler rejects a move for the opponent's piece")
 {
-    TestUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo.users);
+    InMemoryUserRepository repo;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
     manager.createSession(whitePlayer(), blackPlayer());
     GameRequestHandler handler(manager);
 
@@ -60,8 +53,8 @@ TEST_CASE("GameRequestHandler rejects a move for the opponent's piece")
 
 TEST_CASE("GameRequestHandler handles jump and returns a fresh GameView snapshot")
 {
-    TestUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo.users);
+    InMemoryUserRepository repo;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
     manager.createSession(whitePlayer(), blackPlayer());
     GameRequestHandler handler(manager);
 
@@ -73,8 +66,8 @@ TEST_CASE("GameRequestHandler handles jump and returns a fresh GameView snapshot
 
 TEST_CASE("GameRequestHandler returns an error when the connection has no active session")
 {
-    TestUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo.users);
+    InMemoryUserRepository repo;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
     GameRequestHandler handler(manager);
 
     nlohmann::json request{{"type", "jump"}, {"row", 6}, {"col", 4}};
@@ -86,8 +79,8 @@ TEST_CASE("GameRequestHandler returns an error when the connection has no active
 
 TEST_CASE("GameRequestHandler returns an error for an unknown message type")
 {
-    TestUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo.users);
+    InMemoryUserRepository repo;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
     GameRequestHandler handler(manager);
 
     nlohmann::json request{{"type", "not_a_real_type"}};
@@ -99,8 +92,8 @@ TEST_CASE("GameRequestHandler returns an error for an unknown message type")
 
 TEST_CASE("GameRequestHandler returns an error for malformed JSON")
 {
-    TestUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo.users);
+    InMemoryUserRepository repo;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
     GameRequestHandler handler(manager);
 
     nlohmann::json response = nlohmann::json::parse(handler.handle("conn1", "{ this is not valid json"));
@@ -111,8 +104,8 @@ TEST_CASE("GameRequestHandler returns an error for malformed JSON")
 
 TEST_CASE("GameRequestHandler returns an error when a required field is missing")
 {
-    TestUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo.users);
+    InMemoryUserRepository repo;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
     manager.createSession(whitePlayer(), blackPlayer());
     GameRequestHandler handler(manager);
 

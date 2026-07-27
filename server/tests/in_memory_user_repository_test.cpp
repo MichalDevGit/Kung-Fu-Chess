@@ -1,22 +1,18 @@
 #include "tests/doctest.h"
 
-#include <SQLiteCpp/SQLiteCpp.h>
-
-#include "persistence/Database.h"
-#include "persistence/UserRepository.h"
+#include "persistence/InMemoryUserRepository.h"
+#include "persistence/UserRepositoryExceptions.h"
 #include "../../common/Config/RatingConfig.h"
 
-TEST_CASE("Testing UserRepository")
+// Same contract coverage as sqlite_user_repository_test.cpp, run against the
+// dependency-free in-memory implementation -- proof both IUserRepository
+// implementations honor an identical contract.
+TEST_CASE("Testing InMemoryUserRepository")
 {
-    Database db(":memory:");
-    UserRepository repo(db);
+    InMemoryUserRepository repo;
 
     SUBCASE("createUser then findByUsername/findById round-trip")
     {
-        // UserRepository stores whatever credential string it's given --
-        // hashing is AuthService's job (see auth_service_test.cpp), so this
-        // test passes a plain string through unchanged, same as any other
-        // opaque field.
         UserRecord created = repo.createUser("alice", "already-hashed-value");
         CHECK(created.username == "alice");
         CHECK(created.password == "already-hashed-value");
@@ -40,7 +36,7 @@ TEST_CASE("Testing UserRepository")
     SUBCASE("createUser rejects a duplicate username")
     {
         repo.createUser("bob", "pw1");
-        CHECK_THROWS_AS(repo.createUser("bob", "pw2"), SQLite::Exception);
+        CHECK_THROWS_AS(repo.createUser("bob", "pw2"), DuplicateUsernameException);
     }
 
     SUBCASE("setScore sets an absolute value")

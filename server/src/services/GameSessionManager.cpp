@@ -2,9 +2,9 @@
 
 #include <utility>
 
-#include "../persistence/UserRepository.h"
+#include "../persistence/IUserRepository.h"
 
-GameSessionManager::GameSessionManager(GameSession::SendToFn sendTo, UserRepository& userRepository)
+GameSessionManager::GameSessionManager(GameSession::SendToFn sendTo, IUserRepository& userRepository)
     : sendTo(std::move(sendTo))
     , ratingService(userRepository)
 {

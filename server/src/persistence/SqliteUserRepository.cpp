@@ -1,8 +1,8 @@
-#include "UserRepository.h"
+#include "SqliteUserRepository.h"
 
 #include <SQLiteCpp/SQLiteCpp.h>
 
-#include "Database.h"
+#include "UserRepositoryExceptions.h"
 #include "../../../common/Config/RatingConfig.h"
 
 namespace
@@ -17,24 +17,34 @@ namespace
     }
 }
 
-UserRepository::UserRepository(Database& database)
-    : database(database)
+SqliteUserRepository::SqliteUserRepository(const std::string& dbPath)
+    : database(dbPath)
 {
 }
 
-UserRecord UserRepository::createUser(const std::string& username, const std::string& passwordHash)
+UserRecord SqliteUserRepository::createUser(const std::string& username, const std::string& passwordHash)
 {
-    SQLite::Statement insert(database.raw(), "INSERT INTO users (username, password, score) VALUES (?, ?, ?)");
-    insert.bind(1, username);
-    insert.bind(2, passwordHash);
-    insert.bind(3, RatingConfig::INITIAL_RATING);
-    insert.exec();
+    try
+    {
+        SQLite::Statement insert(database.raw(), "INSERT INTO users (username, password, score) VALUES (?, ?, ?)");
+        insert.bind(1, username);
+        insert.bind(2, passwordHash);
+        insert.bind(3, RatingConfig::INITIAL_RATING);
+        insert.exec();
+    }
+    catch (const SQLite::Exception&)
+    {
+        // The UNIQUE constraint on username is the only expected failure mode
+        // here -- rethrown as a backend-agnostic exception so callers never
+        // need to know SQLite is involved (see UserRepositoryExceptions.h).
+        throw DuplicateUsernameException(username);
+    }
 
     const int id = static_cast<int>(database.raw().getLastInsertRowid());
     return UserRecord{id, username, passwordHash, RatingConfig::INITIAL_RATING};
 }
 
-std::optional<UserRecord> UserRepository::findByUsername(const std::string& username) const
+std::optional<UserRecord> SqliteUserRepository::findByUsername(const std::string& username) const
 {
     SQLite::Statement query(database.raw(), "SELECT id, username, password, score FROM users WHERE username = ?");
     query.bind(1, username);
@@ -45,7 +55,7 @@ std::optional<UserRecord> UserRepository::findByUsername(const std::string& user
     return rowToRecord(query);
 }
 
-std::optional<UserRecord> UserRepository::findById(int id) const
+std::optional<UserRecord> SqliteUserRepository::findById(int id) const
 {
     SQLite::Statement query(database.raw(), "SELECT id, username, password, score FROM users WHERE id = ?");
     query.bind(1, id);
@@ -56,7 +66,7 @@ std::optional<UserRecord> UserRepository::findById(int id) const
     return rowToRecord(query);
 }
 
-void UserRepository::setScore(int userId, int newScore)
+void SqliteUserRepository::setScore(int userId, int newScore)
 {
     SQLite::Statement update(database.raw(), "UPDATE users SET score = ? WHERE id = ?");
     update.bind(1, newScore);

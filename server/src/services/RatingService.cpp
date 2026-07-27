@@ -1,10 +1,10 @@
 #include "RatingService.h"
 
 #include "EloCalculator.h"
-#include "../persistence/UserRepository.h"
+#include "../persistence/IUserRepository.h"
 #include "../persistence/UserRecord.h"
 
-RatingService::RatingService(UserRepository& users)
+RatingService::RatingService(IUserRepository& users)
     : users(users)
 {
 }

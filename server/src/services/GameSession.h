@@ -32,7 +32,7 @@
 // markReconnected can all be called concurrently (one client's request
 // thread, the server's own tick-loop thread) against the same GameEngine,
 // which has no locking of its own -- same plain-mutex pattern AuthService
-// already uses for UserRepository's shared connection.
+// already uses around its IUserRepository calls.
 class GameSession
 {
 public:

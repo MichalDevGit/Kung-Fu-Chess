@@ -99,7 +99,7 @@ file(GLOB GAME_SESSION_HEADERS "src/services/GameSession.h" "src/services/GameSe
 
 add_library(KungFuChessGameSession STATIC ${GAME_SESSION_SOURCES} ${GAME_SESSION_HEADERS})
 target_include_directories(KungFuChessGameSession PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-# KungFuChessPersistence added for UserRepository -- GameSessionManager owns a
+# KungFuChessPersistence added for IUserRepository -- GameSessionManager owns a
 # RatingService built from one, and hands every GameSession it creates a
 # GameOutcomeFn closing over it (see GameSessionManager::createSession), for
 # both game-ending paths' ELO rating updates (GameSession::forfeitTo and its
