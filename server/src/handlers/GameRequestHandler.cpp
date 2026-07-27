@@ -11,39 +11,45 @@ GameRequestHandler::GameRequestHandler(GameSessionManager& sessionManager)
 {
 }
 
-std::string GameRequestHandler::handle(const std::string& rawJson) const
+std::string GameRequestHandler::handle(const std::string& connectionId, const std::string& rawJson) const
 {
     try
     {
         const nlohmann::json parsed = nlohmann::json::parse(rawJson);
         const std::string type = protocol::readType(parsed);
 
-        if (type == protocol::MessageType::JoinGame)
-        {
-            GameSession& session = sessionManager.getOrCreateDefaultSession();
-            return protocol::GameJoinedResult{session.getId(), session.getGameView()}.toJson();
-        }
-
         if (type == protocol::MessageType::Move)
         {
-            const protocol::MoveRequest request = protocol::MoveRequest::fromJson(parsed);
-            GameSession& session = sessionManager.getOrCreateDefaultSession();
+            GameSession* session = sessionManager.findSessionByConnection(connectionId);
+            if (session == nullptr)
+                return protocol::ErrorResult{"no_active_game"}.toJson();
 
-            session.requestMove(
+            const protocol::MoveRequest request = protocol::MoveRequest::fromJson(parsed);
+            const GameSession::CommandOutcome outcome = session->requestMove(
+                connectionId,
                 Position(request.fromRow, request.fromCol),
                 Position(request.toRow, request.toCol));
 
-            return protocol::GameViewMessage{session.getGameView()}.toJson();
+            if (!outcome.accepted)
+                return protocol::ErrorResult{outcome.reason}.toJson();
+
+            return protocol::GameViewMessage{session->getGameView()}.toJson();
         }
 
         if (type == protocol::MessageType::Jump)
         {
+            GameSession* session = sessionManager.findSessionByConnection(connectionId);
+            if (session == nullptr)
+                return protocol::ErrorResult{"no_active_game"}.toJson();
+
             const protocol::JumpRequest request = protocol::JumpRequest::fromJson(parsed);
-            GameSession& session = sessionManager.getOrCreateDefaultSession();
+            const GameSession::CommandOutcome outcome =
+                session->requestJump(connectionId, Position(request.row, request.col));
 
-            session.requestJump(Position(request.row, request.col));
+            if (!outcome.accepted)
+                return protocol::ErrorResult{outcome.reason}.toJson();
 
-            return protocol::GameViewMessage{session.getGameView()}.toJson();
+            return protocol::GameViewMessage{session->getGameView()}.toJson();
         }
 
         return protocol::ErrorResult{"unknown_type"}.toJson();

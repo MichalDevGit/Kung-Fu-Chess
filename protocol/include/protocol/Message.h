@@ -6,6 +6,8 @@
 
 #include "protocol/MessageType.h"
 #include "../../../common/DTO/GameView.h"
+#include "../../../common/enums/EnumJson.h"
+#include "../../../common/enums/PieceColor.h"
 
 // Header-only JSON message envelope shared by the server and every client
 // (the CLI today, a future GUI client later) so both sides speak the exact
@@ -124,45 +126,6 @@ namespace protocol
 
     // ---- Game session / gameplay messages ----
 
-    struct JoinGameRequest
-    {
-        std::string toJson() const
-        {
-            nlohmann::json j{{"type", MessageType::JoinGame}};
-            return j.dump();
-        }
-
-        static JoinGameRequest fromJson(const nlohmann::json&)
-        {
-            return JoinGameRequest{};
-        }
-    };
-
-    // Carries the just-joined session's current GameView alongside the
-    // sessionId -- join_game is a request/response message like any other, so
-    // this is the only chance the server gets to hand the client an initial
-    // board snapshot; without it the client has no view at all until its own
-    // first move/jump request round-trips one back (and can't even select a
-    // piece to make that first move, since selection is checked against the
-    // last-received view).
-    struct GameJoinedResult
-    {
-        std::string sessionId;
-        GameView view;
-
-        std::string toJson() const
-        {
-            nlohmann::json j{{"type", MessageType::GameJoined}, {"sessionId", sessionId}};
-            j["view"] = view.toJson();
-            return j.dump();
-        }
-
-        static GameJoinedResult fromJson(const nlohmann::json& j)
-        {
-            return GameJoinedResult{j.value("sessionId", std::string()), GameView::fromJson(j.at("view"))};
-        }
-    };
-
     struct MoveRequest
     {
         int fromRow = 0;
@@ -244,17 +207,142 @@ namespace protocol
         }
     };
 
+    // reason/winnerUserId are both optional -- empty/0 for an ordinary
+    // king-capture ending (the client already renders the board, so which
+    // king is missing is visible without repeating it here); populated for
+    // a disconnect-timeout forfeit (see GameSession::forfeitTo), the one
+    // case where the losing side has no board evidence of why the game
+    // ended.
     struct GameOverMessage
     {
+        std::string reason;
+        int winnerUserId = 0;
+
         std::string toJson() const
         {
             nlohmann::json j{{"type", MessageType::GameOver}};
+            if (!reason.empty())
+                j["reason"] = reason;
+            if (winnerUserId != 0)
+                j["winnerUserId"] = winnerUserId;
             return j.dump();
         }
 
-        static GameOverMessage fromJson(const nlohmann::json&)
+        static GameOverMessage fromJson(const nlohmann::json& j)
         {
-            return GameOverMessage{};
+            GameOverMessage message;
+            message.reason = j.value("reason", std::string());
+            message.winnerUserId = j.value("winnerUserId", 0);
+            return message;
+        }
+    };
+
+    // ---- Matchmaking messages ----
+
+    // Sent by the client immediately after a successful login_result --
+    // there is no manual "look for a game" step from the user's point of
+    // view (see client/src/main.cpp).
+    struct FindGameRequest
+    {
+        std::string toJson() const
+        {
+            nlohmann::json j{{"type", MessageType::FindGame}};
+            return j.dump();
+        }
+
+        static FindGameRequest fromJson(const nlohmann::json&)
+        {
+            return FindGameRequest{};
+        }
+    };
+
+    // Synchronous ack for find_game -- the real outcome (MatchFoundResult/
+    // NoMatchResult) arrives later as an unsolicited push once a second
+    // player shows up or the wait times out, since matching is inherently
+    // asynchronous.
+    struct SearchingResult
+    {
+        std::string toJson() const
+        {
+            nlohmann::json j{{"type", MessageType::Searching}};
+            return j.dump();
+        }
+
+        static SearchingResult fromJson(const nlohmann::json&)
+        {
+            return SearchingResult{};
+        }
+    };
+
+    struct MatchFoundResult
+    {
+        std::string sessionId;
+        PieceColor color = PieceColor::None;
+        std::string opponentUsername;
+        GameView view;
+
+        std::string toJson() const
+        {
+            nlohmann::json j{
+                {"type", MessageType::MatchFound},
+                {"sessionId", sessionId},
+                {"color", color},
+                {"opponentUsername", opponentUsername}};
+            j["view"] = view.toJson();
+            return j.dump();
+        }
+
+        static MatchFoundResult fromJson(const nlohmann::json& j)
+        {
+            return MatchFoundResult{
+                j.value("sessionId", std::string()),
+                j.value("color", PieceColor::None),
+                j.value("opponentUsername", std::string()),
+                GameView::fromJson(j.at("view"))};
+        }
+    };
+
+    struct NoMatchResult
+    {
+        std::string toJson() const
+        {
+            nlohmann::json j{{"type", MessageType::NoMatch}};
+            return j.dump();
+        }
+
+        static NoMatchResult fromJson(const nlohmann::json&)
+        {
+            return NoMatchResult{};
+        }
+    };
+
+    // Empty payloads -- only the "type" tag carries information, mirroring
+    // GameStartedMessage/GameOverMessage above.
+    struct OpponentDisconnectedMessage
+    {
+        std::string toJson() const
+        {
+            nlohmann::json j{{"type", MessageType::OpponentDisconnected}};
+            return j.dump();
+        }
+
+        static OpponentDisconnectedMessage fromJson(const nlohmann::json&)
+        {
+            return OpponentDisconnectedMessage{};
+        }
+    };
+
+    struct OpponentReconnectedMessage
+    {
+        std::string toJson() const
+        {
+            nlohmann::json j{{"type", MessageType::OpponentReconnected}};
+            return j.dump();
+        }
+
+        static OpponentReconnectedMessage fromJson(const nlohmann::json&)
+        {
+            return OpponentReconnectedMessage{};
         }
     };
 

@@ -16,7 +16,7 @@ public:
 
     // Never throws -- any parse/validation failure is caught internally and
     // turned into a protocol::ErrorResult envelope instead.
-    std::string handle(const std::string& rawJson) const;
+    std::string handle(const std::string& connectionId, const std::string& rawJson) const;
 
 private:
     GameSessionManager& sessionManager;

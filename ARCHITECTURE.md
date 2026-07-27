@@ -6,38 +6,53 @@ eventually look. Read this before exploring the source tree — it should make a
 re-read of the sources unnecessary for most tasks. If you change the architecture in a
 way that makes a section below wrong, update that section in the same change.
 
-Last reviewed: 2026-07-26, against the source tree as of the networked client/server
-split (six phases, tracked in that order): (1) `src/common/` promoted to a shared
-top-level `common/` library; (2) the domain logic (`src/logic/*`) moved to
-`server/src/game/` as the server's authoritative simulation; (3) `protocol/` extended
-with game-session messages (`join_game`/`move`/`jump`/`game_view`/`game_started`/
-`game_over`) and every `common/DTO` type given its own `toJson()`/`fromJson()`;
-(4) `server/src/services/GameSession` + `GameSessionManager` +
-`server/src/handlers/GameRequestHandler` built to host the authoritative game and
-dispatch JSON commands to it, plus a server-owned tick loop; (5) `src/UI/*` moved to
-`client/src/ui/`, and a new `client/src/game/GameClient` built as the network-backed
-replacement for a locally-held `Controller&`; (6) the now-empty `src/` deleted
-entirely, retiring the old single-process "hotseat" executable for good. **This is now
-a real client/server game**: `server/` hosts the one authoritative `GameSession`,
-`client/`'s GUI (`KungFuChessGuiClient`) is a thin renderer that only ever talks to it
-over `ws://` JSON messages — there is no in-process path left connecting UI to game
-logic. See "Server / persistence / networking layer" below for the full design,
-including a real limitation worth knowing about before extending it further: there is
-no real server-to-client push yet, so a connected client's view of the game only
-refreshes when *it* sends a `move`/`jump` request, not continuously.
+Last reviewed: 2026-07-27, against the source tree as of the auth-gated matchmaking
+change (five phases, tracked in that order, layered on top of the earlier networked
+client/server split): (1) `server/src/network/WebSocketServer` threaded a stable
+per-connection id through every request, plus a targeted `sendTo(connectionId, json)`
+and a `setCloseHandler` for drop notifications, and `server/src/services/
+ConnectionRegistry` was added to bind `connectionId -> {userId, username, score}` the
+moment `login` succeeds; (2) `server/src/services/Matchmaker` (a plain score/queue-order
+pairing scan, driven off the existing tick thread) plus new `protocol/` messages
+(`find_game`/`match_found`/`no_match`) and `server/src/handlers/
+MatchmakingRequestHandler` were added, dispatched in a three-way `auth -> matchmaking ->
+game` chain (see `server/main.cpp`); (3) `GameSessionManager`/`GameSession` were reworked
+from "one implicit, lazily-created default session" into real per-match sessions —
+`GameSessionManager::createSession` is only ever called from a `Matchmaker` pairing, each
+`GameSession` now knows its two participants' user ids/usernames/connection ids and
+rejects a `move`/`jump` whose requesting connection doesn't own the piece's color
+(`Controller::pieceColorAt` + `GameSession::requestMove`/`requestJump`, returning a
+`CommandOutcome` instead of applying blindly) — `join_game`/`game_joined` are gone
+entirely, since a session now only ever comes into being via a match, which already
+hands the client its `GameView`; (4) disconnect/reconnect resilience — a closed
+connection marks its `GameSession` slot disconnected (pushing `opponent_disconnected` to
+the other side) without pausing the tick loop, a forfeit-with-score-delta fires if
+`MatchmakingConfig::RECONNECT_GRACE_MILLIS` elapses with no reconnect, and a fresh
+`login` for a user with a still-active session rebinds it and pushes a
+`match_found`-shaped resume instead of going through matchmaking again; (5) the client
+was collapsed from two executables into one — `client/src/gui_main.cpp`/
+`KungFuChessGuiClient` are retired, `client/src/main.cpp` (built as `KungFuChessClient`)
+now runs the CLI auth phase, then matchmaking, then the OpenCV game pane, all against the
+same connection. **This is now a real, authenticated, matched 1v1 game**: two different
+users, each running their own `KungFuChessClient` process, register/log in, get
+automatically paired by score/queue-order (white = whoever logged in first), and play a
+color-ownership-enforced, disconnect-resilient game against each other. See "Server /
+persistence / networking layer" below for the full design.
 
 ## What this project is
 
 "KungFuChess" is a real-time chess variant (no turns — in the classic Kung Fu Chess
 rules, pieces move independently with per-piece cooldowns), implemented in **C++17**
-across three cooperating processes-worth of code: `server/` (persistence, the
-authoritative game engine, and the WebSocket API), `client/` (a GUI client rendered
-with **OpenCV**, plus a text-based CLI client), and `protocol/`/`common/` (the shared
-JSON contract and shared value types both ends link). It is an early-stage /
+across three cooperating processes-worth of code: `server/` (persistence, matchmaking,
+the authoritative game engine, and the WebSocket API), `client/` (one executable: CLI
+auth, then an OpenCV-rendered game pane, over one connection), and `protocol/`/`common/`
+(the shared JSON contract and shared value types both ends link). It is an early-stage /
 in-progress codebase: the domain logic (rules, move validation, real-time timing) is
-fairly well developed and unit-tested; the network layer covers session join and
-move/jump commands but not yet real server-push, rooms/matchmaking beyond one implicit
-session, or reconnect handling.
+fairly well developed and unit-tested; the network layer now covers real per-connection
+push, matchmaking, per-match session isolation, color-ownership enforcement, and
+disconnect/reconnect handling — see the Gaps list below for what's still deliberately
+out of scope (TLS, password hashing, session persistence across a server restart,
+spectators, resign/draw, ELO-style rating).
 
 ## Build system
 
@@ -50,8 +65,7 @@ session, or reconnect handling.
   in `lib/bin`), version 4.5.1. Debug links `opencv_world451d`, Release links
   `opencv_world451`. The root `CMakeLists.txt` only *defines* `OPENCV_DIR`/
   `OPENCV_INCLUDE_DIR`/`OPENCV_LIB_DIR`; only `client/`'s `KungFuChessClientUi` library
-  actually links OpenCV now (previously two executables did) — the DLL is copied next
-  to `KungFuChessGuiClient` post-build.
+  actually links OpenCV now — the DLL is copied next to `KungFuChessClient` post-build.
 - C++ standard: 17.
 - Root `CMakeLists.txt` `FetchContent`s `ixwebsocket` (pinned `v12.0.1`, built with
   `USE_TLS`/`USE_ZLIB` off — plain `ws://` only, no compression) and `nlohmann_json`
@@ -72,24 +86,31 @@ session, or reconnect handling.
     `KungFuChessGame` (STATIC, all of `src/game/` — model/rules/Engine/Controller/IO)
     `-> KungFuChessCommon`; `KungFuChessGameSession` (STATIC,
     `services/GameSession.cpp`+`GameSessionManager.cpp` — kept separate from
-    `KungFuChessAuth` on purpose, see below) `-> KungFuChessGame, KungFuChessProtocol`;
-    `KungFuChessNetwork` (STATIC, `handlers/`+`network/`)
+    `KungFuChessAuth` on purpose, see below) `-> KungFuChessGame, KungFuChessProtocol,
+    KungFuChessPersistence` (the last one added for `UserRepository`, which
+    `GameSessionManager` now takes directly to build every session's forfeit-score
+    callback — see "Server / persistence / networking layer" below);
+    `KungFuChessNetwork` (STATIC, `handlers/`+`network/`+`services/ConnectionRegistry.cpp`+
+    `services/Matchmaker.cpp` — the latter two compiled here since neither depends on
+    `KungFuChessGame`/`KungFuChessGameSession` at all, and the handlers that need them
+    already live in this library)
     `-> KungFuChessAuth, KungFuChessGameSession, KungFuChessProtocol, ixwebsocket`;
     `KungFuChessServer` executable `-> KungFuChessNetwork`;
     `KungFuChessPersistence_tests` (doctest; persistence + auth + game + game-session +
-    common tests, all in one binary) `-> KungFuChessPersistence, KungFuChessAuth,
-    KungFuChessGame, KungFuChessGameSession, KungFuChessNetwork`.
+    matchmaker + common tests, all in one binary) `-> KungFuChessPersistence,
+    KungFuChessAuth, KungFuChessGame, KungFuChessGameSession, KungFuChessNetwork`.
   - `client/`: `KungFuChessClientNetwork` (STATIC, `network/WebSocketClient`)
-    `-> KungFuChessProtocol, ixwebsocket`; `KungFuChessCliClient` executable (the
-    text-based auth-only CLI) `-> KungFuChessClientNetwork, KungFuChessCommon`;
+    `-> KungFuChessProtocol, ixwebsocket`; `KungFuChessCli` (STATIC, `cli/CliShell.cpp` —
+    a library now, not its own executable, since `main.cpp` needs it plus the UI/game
+    libraries below in one process) `-> KungFuChessClientNetwork, KungFuChessProtocol`;
     `KungFuChessClientGame` (STATIC, `game/BoardMapper.cpp`+`GameClient.cpp`)
     `-> KungFuChessClientNetwork, KungFuChessCommon`; `KungFuChessClientUi` (STATIC,
     `ui/` — moved from `src/UI/`) `-> KungFuChessClientGame, KungFuChessCommon, OpenCV`;
-    `KungFuChessGuiClient` executable (`src/gui_main.cpp` — the actual playable
-    networked game) `-> KungFuChessClientUi, KungFuChessClientGame,
-    KungFuChessClientNetwork, KungFuChessCommon`; `KungFuChessClient_tests` (doctest;
-    `BoardMapper` + basic `GameClient` construction/default-state coverage)
-    `-> KungFuChessClientGame`.
+    `KungFuChessClient` executable (`src/main.cpp` — the one real client: CLI auth phase,
+    then matchmaking, then the game) `-> KungFuChessCli, KungFuChessClientUi,
+    KungFuChessClientGame, KungFuChessClientNetwork, KungFuChessCommon`;
+    `KungFuChessClient_tests` (doctest; `BoardMapper` + `GameClient` construction/
+    default-state coverage) `-> KungFuChessClientGame`.
 
 ## Module map and dependency direction
 
@@ -97,8 +118,9 @@ session, or reconnect handling.
 common/                <-- no dependency on server/ or client/
   enums/                   PieceColor, PieceType, PieceState, RestKind, MoveValidationReason
   Config/                  BoardConfig (CELL_SIZE), TimingConfig (move/rest/tick durations),
-                           NetworkConfig (host/port) -- plain constexpr, single source of
-                           truth for values previously hardcoded/duplicated per file
+                           NetworkConfig (host/port), MatchmakingConfig (queue wait/score
+                           range, reconnect grace, forfeit score deltas) -- plain constexpr,
+                           single source of truth for values previously hardcoded/duplicated
   EventBus/                EventBus.h (generic pub/sub) + Events.h (chess event payloads)
   DTO/                     BoardView/PieceView/PositionView/MotionView/JumpView/RestView/
                            GameView -- each with a toJson()/fromJson() pair; each type's
@@ -106,6 +128,9 @@ common/                <-- no dependency on server/ or client/
                            PositionView(const Position&)) lives in its own *FromDomain.cpp
                            translation unit, deliberately separate from that type's other
                            methods (see "DTO layer" below for why)
+  MonotonicClock.h         nowMillis() -- wall-clock ms (steady_clock), used only for
+                           matchmaking queue timestamps and disconnect-grace timing, never
+                           for the game engine's own manually-advanced logical clock
         ^
 protocol/               <-- depends on common/ (wraps common::GameView directly)
   MessageType.h            wire "type" string constants
@@ -114,9 +139,13 @@ protocol/               <-- depends on common/ (wraps common::GameView directly)
 server/src/game/*       <-- the authoritative domain simulation, depends only on common/
   model, rules, Engine, Controller, IO   (moved verbatim from src/logic/*, see below)
         ^
-server: GameSession, GameSessionManager, GameRequestHandler   <-- depends on game/ + protocol/
+server: GameSession, GameSessionManager   <-- depends on game/ + protocol/ + persistence/
+        ^ (UserRepository, for forfeit score deltas)
+server: ConnectionRegistry, Matchmaker, AuthRequestHandler, MatchmakingRequestHandler,
+        GameRequestHandler   <-- depends on the above + auth/ + persistence/
         ^
-server/src/network (WebSocketServer)   <-- request/response transport, unaware of game/ at all
+server/src/network (WebSocketServer)   <-- per-connection-id request/response + targeted
+                                            push transport, unaware of game/ at all
 
 client/src/ui/*         <-- depends only on common/DTO + common/enums + client/src/game/PixelPosition
   Img, BoardCanvas, SpriteManager, AnimationFrame, Renderer, GameLoop
@@ -124,6 +153,9 @@ client/src/ui/*         <-- depends only on common/DTO + common/enums + client/s
 client/src/game/*       <-- BoardMapper (pixel math) + PixelPosition ({int x, y}) +
                             GameClient (network-backed Controller& replacement),
                             depends on common/ + protocol/
+        ^
+client/src/cli/CliShell <-- the auth-phase message handler (register/login/help/quit);
+                            depends on protocol/ + client/src/network only
         ^
 client/src/network (WebSocketClient)   <-- request/response transport, unaware of game/ at all
 ```
@@ -378,12 +410,13 @@ constructor `cellSize` argument, `SpriteManager`'s `spriteSize` argument, and
 - `GameClient` — the network-backed stand-in for what used to be a directly-held
   `Controller&`. Exposes the exact same method surface `GameLoop` always called:
   `handlePixelClick(PixelPosition)`, `handlePixelJump(PixelPosition)`, `getGameView()`,
-  `isGameOver()`. Constructed with a `WebSocketClient&`; registers itself as that
-  client's message handler (via the new `WebSocketClient::setOnMessage`, added
-  specifically to solve this construction-order problem: `GameClient` can't exist
-  before `WebSocketClient` does, so the handler can't be supplied at `WebSocketClient`
-  construction time the way `CliShell`'s simpler print-only handler is) and
-  immediately sends a `JoinGameRequest`.
+  `isGameOver()`. Constructed with a `WebSocketClient&` and the match's initial
+  `GameView` (from `MatchFoundResult` — there is no more `join_game` round trip);
+  registers itself as that client's message handler (via `WebSocketClient::
+  setOnMessage`, added specifically to solve this construction-order problem:
+  `GameClient` can't exist before `WebSocketClient` does, so the handler can't be
+  supplied at `WebSocketClient` construction time), replacing whichever handler
+  `CliShell`/`waitForMatch` had installed for the earlier phases.
   - `handlePixelClick` reimplements `Controller::click()`'s old select-then-move UX,
     but against the **last-received `BoardView`/`PieceView` snapshot** instead of a
     live `Board`/`Piece` — first click selects a same-color piece (checked against
@@ -397,9 +430,16 @@ constructor `cellSize` argument, `SpriteManager`'s `spriteSize` argument, and
     `AnimationFrame`/`Renderer`) keeps working under the network split.
   - `handlePixelJump` is a direct, stateless `protocol::JumpRequest` send — mirrors
     `Controller::jump()`'s always-direct behavior, no selection involved.
-  - `onMessage(json)` (private, invoked from `WebSocketClient`'s background thread) —
-    on a `game_view` message, replaces the stored `GameView` snapshot; on `game_over`,
-    sets a local flag `isGameOver()` reads. Any other type, or any parse failure, is
+  - Constructed with the match's initial `GameView` directly (from `MatchFoundResult` --
+    there is no more `join_game` round trip to wait on; see "Current state of
+    integration" below) instead of starting from an empty board.
+  - `onMessage(json)` (private, invoked from `WebSocketClient`'s background thread,
+    installed by this constructor -- replacing whatever handler `CliShell` had
+    installed for the auth/matchmaking phase) — on a `game_view` message, replaces the
+    stored `GameView` snapshot; on `game_over`, sets a local flag `isGameOver()` reads
+    and prints the message's `reason` (if any) to the console; on
+    `opponent_disconnected`/`opponent_reconnected`, prints a console-only status line
+    (no rendering work for either yet). Any other type, or any parse failure, is
     silently ignored (never throws out of a socket callback). All shared state is
     behind one `std::mutex`, since this callback runs on a different thread than
     `handlePixelClick`/`getGameView`/`isGameOver` (the render loop's thread) —
@@ -408,37 +448,54 @@ constructor `cellSize` argument, `SpriteManager`'s `spriteSize` argument, and
 
 ## Current state of integration
 
-There is exactly one way to play now: start `KungFuChessServer`, then run
-`KungFuChessGuiClient` against it. `gui_main.cpp` connects a `WebSocketClient`,
-constructs `GameClient` around it (which joins the session), then builds
+There is exactly one way to play now, and it requires two different logged-in users:
+start `KungFuChessServer`, then run `KungFuChessClient` once per player (two separate
+terminals/machines). Each process: connects a `WebSocketClient`; runs `CliShell` for
+`register`/`login` (blocking on the matching `login_result`, see `CliShell::run`); on a
+successful login, either resumes an existing session (a reconnect — see below) or sends
+`FindGameRequest` and blocks for `MatchFoundResult`/`NoMatchResult` (`waitForMatch` in
+`client/src/main.cpp`, auto-retrying on a no-match after the user confirms); and once
+matched, constructs `GameClient` (seeded with the match's initial `GameView`) and builds
 `BoardCanvas`/`SpriteManager`/`AnimationFrame`/`Renderer`/`GameLoop` exactly as the old
-(now-deleted) local `src/main.cpp` did with a `Controller`. The old single-process,
-no-network "hotseat" path (`GameFactory`+`Controller`+`GameLoop` all in one address
-space) no longer exists in any form — it was fully retired once this networked path
-was verified end-to-end.
+`gui_main.cpp` did — all four phases run in **one process, over one `WebSocketClient`
+connection**, which is what lets the server treat "connection id" as "identity" for the
+whole session (see below). There is no more separate GUI-only executable to run instead.
 
-**Known limitation, not yet addressed**: `server/src/network/WebSocketServer` is still
-purely request/response (one inbound message → one reply on the same connection,
-nothing unsolicited) — this was deliberately left unchanged during the client/server
-split. `GameSession`'s `EventBus` subscribers *do* build the right
-`protocol::GameViewMessage`/`GameStartedMessage`/`GameOverMessage` for every event that
-fires, but the `BroadcastFn` callback they're handed today (wired up in
-`server/main.cpp`) just logs to console — there is no real per-connection push
-transport for it to call yet. In practice this means: a client's `GameView` only
-refreshes as the *response* to that same client's own `move`/`jump` request (which
-`GameRequestHandler` always returns fresh); a motion settling, a capture resolving, or
-game-over triggered by the server's own tick loop between two client actions is
-**not** visible to that client until its next action. Building real server push
-(tracking connections per session, extending `WebSocketServer` to send unsolicited
-messages) is the natural next step, not yet done.
+Real per-connection server push exists now: `server/src/network/WebSocketServer` tracks
+every open connection by id and exposes both `broadcast(json)` (all connections) and
+`sendTo(connectionId, json)` (one). `GameSession` uses the latter exclusively — its two
+participants' connection ids are known at construction (see below), so every
+`EventBus`-driven push (`game_started`/`game_view`/`game_over`) and every
+matchmaking/reconnect push (`match_found`/`no_match`/`opponent_disconnected`/
+`opponent_reconnected`) reaches exactly the right connection(s), never a stray third
+client. Combined with the server's own tick loop, a connected client's board now updates
+continuously (an in-flight motion glides smoothly) whether or not that client has sent a
+request recently — the old "only refreshes on your own move/jump" limitation is gone.
 
-What's still missing/rough, carried over unchanged from before the split:
+**Auth gates everything.** `join_game`/`game_joined` no longer exist: a `GameSession` is
+only ever created by `GameSessionManager::createSession`, only ever called from a
+`Matchmaker` pairing (`server/main.cpp`'s tick loop) or, for a reconnect, from an
+existing session found by user id. A `move`/`jump` request is resolved to a session via
+`GameSessionManager::findSessionByConnection(connectionId)` — a connection with no
+active session gets `{"error":"no_active_game"}`, and one that names a square holding
+the *other* participant's piece (checked via the new `Controller::pieceColorAt`) gets
+`{"error":"not_your_piece"}` before the engine is ever touched. See "Server /
+persistence / networking layer" below for matchmaking pairing rules and the
+disconnect/reconnect forfeit-and-resume design.
+
+What's still missing/rough:
 - **Sprite-level animation** still doesn't cover `Captured` (no on-disk sprite folder
   exists for it at all — see Gaps).
 - No visual feedback for check/checkmate/stalemate (none of those are implemented at
   the rules level either — see Gaps).
 - Password hashing (`server/src/persistence/UserRepository`) is still plain text.
 - `wss://`/TLS still doesn't exist — plain `ws://` only.
+- Matchmaking/session/reconnect state is entirely in-memory — a server restart drops
+  every queued or in-progress game (scores persist in SQLite; games don't). No
+  persistence-across-restart is planned yet.
+- No spectators, no resign/draw offers, no rooms beyond 1v1, no ELO-style rating (score
+  deltas on forfeit are a flat `MatchmakingConfig::SCORE_DELTA_WIN`/`_LOSS`) — all
+  deliberately out of scope for now.
 
 ## Testing
 
@@ -448,25 +505,30 @@ as separate copies rather than a shared location, since each is an independent b
 target and this is a vendored single-header third-party file, not project code).
 
 - `server/tests/` — `auth_service_test.cpp`, `user_repository_test.cpp` (persistence/
-  auth, no sockets), `game_session_test.cpp`/`game_request_handler_test.cpp` (new —
-  `GameSession`'s event→broadcast wiring with a fake broadcast callback, and
-  `GameRequestHandler`'s JSON dispatch/error handling), `common_tests/` (moved from
-  `src/tests/common_tests/` — `EventBus`/`PieceStateToString`/`TimeProgress`), and
-  `game_tests/` (moved from `src/tests/logic_tests/` — mirrors
+  auth, no sockets); `game_session_test.cpp` (construction pushes to both participants
+  by connection id, `not_your_piece`/`unknown_connection` rejection, per-tick pushes,
+  disconnect suppresses sends to that slot only, reconnect resumes them, `tickAll`,
+  `rebindConnection`) and `game_request_handler_test.cpp` (connection-scoped `move`/
+  `jump` dispatch including `no_active_game`/`not_your_piece` errors) — both use a real
+  `Database(":memory:")`-backed `UserRepository` now, since `GameSessionManager`
+  requires one; `matchmaker_test.cpp` (new — score-range pairing, earliest-queued-first
+  ordering, `MAX_WAIT_MILLIS` timeout, idempotent `enqueue`); `common_tests/` (
+  `EventBus`/`PieceStateToString`/`TimeProgress`); and `game_tests/` (mirrors
   `server/src/game/{model,rules,Engine,Controller,IO}`, same one-`TEST_CASE`-per-class/
   `SUBCASE`-per-scenario pattern, no mocking). All in one binary,
   `KungFuChessPersistence_tests` (name kept from before the split rather than renamed,
   since it now covers considerably more than persistence).
-- `protocol/tests/` (new) — round-trip `toJson()`→`fromJson()` coverage for every game
-  message struct, including a full `GameViewMessage` round-trip through a real
-  `BoardView`/`MotionView`/`JumpView`/`RestView` snapshot.
-- `client/tests/` (new) — `board_mapper_test.cpp` (moved from
-  `src/tests/logic_tests/controller/`, updated for `BoardMapper`'s `PositionView`
-  return type) and `game_client_test.cpp` (construction/default-state/no-crash-without-
-  a-live-connection coverage only — `GameClient`'s actual click-to-select-then-move
-  decision logic depends on real board content that only ever arrives from a live
-  server's `GameViewMessage`, so that path is verified manually against a running
-  server instead of faked in a unit test).
+- `protocol/tests/` (new) — round-trip `toJson()`→`fromJson()` coverage for every message
+  struct, including `find_game`/`match_found`/`no_match` and a full `GameViewMessage`
+  round-trip through a real `BoardView`/`MotionView`/`JumpView`/`RestView` snapshot.
+- `client/tests/` (new) — `board_mapper_test.cpp` (updated for `BoardMapper`'s
+  `PositionView` return type) and `game_client_test.cpp` (construction from a given
+  initial `GameView`/default-state/no-crash-without-a-live-connection coverage only —
+  `GameClient`'s actual click-to-select-then-move decision logic depends on real board
+  content that only ever arrives from a live server's `GameViewMessage`, so that path,
+  along with the full register/login/matchmake/color-assignment/disconnect/reconnect
+  flow, is verified manually against a running server and two real client processes
+  instead of faked in a unit test).
 
 Notably **no tests for `client/src/ui/*`**, no tests for `CoordinateConverter`, and no
 tests for the DTOs' `toJson()`/`fromJson()` round-trips *outside* of what
@@ -476,10 +538,10 @@ message wrapper.
 
 ## Server / persistence / networking layer (`server/`, `protocol/`, `client/`)
 
-The full networked client/server design. `server/` hosts persistence, the
-authoritative game engine, and both the auth and game-command JSON APIs; `protocol/`
-is the shared wire-format contract; `client/` has two executables — the original
-auth-only CLI, and the actual playable GUI.
+The full networked, auth-gated, matched design. `server/` hosts persistence,
+matchmaking, the authoritative game engine, and the auth/matchmaking/game-command JSON
+APIs; `protocol/` is the shared wire-format contract; `client/` is one executable that
+runs all three phases (auth, matchmaking, game) over one connection.
 
 ### `protocol/` — shared JSON message contract
 
@@ -487,102 +549,179 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
 `server/`, and `client/`, so no one duplicates the wire format.
 
 - `MessageType.h` — the JSON envelope's `"type"` string constants: `register`,
-  `login`, `register_result`, `login_result`, `error`, and (new) `join_game`,
-  `game_joined`, `move`, `jump`, `game_view`, `game_started`, `game_over`.
+  `login`, `register_result`, `login_result`, `error`, `move`, `jump`, `game_view`,
+  `game_started`, `game_over`, and (new) `find_game`, `searching`, `match_found`,
+  `no_match`, `opponent_disconnected`, `opponent_reconnected`. `join_game`/`game_joined`
+  are gone — a session now only ever comes into being via a match (or a reconnect
+  resume), both of which already hand the client a `match_found`-shaped payload
+  carrying the initial `GameView`.
 - `Message.h` — one struct per message, each with an in-class `toJson()`/`fromJson()`
   pair (built on `nlohmann::json`) — the only place that knows that message's field
   names. Auth structs (`RegisterRequest`/`LoginRequest`/`RegisterResult`/
-  `LoginResult`/`ErrorResult`) are unchanged from before the split. New game structs:
-  `JoinGameRequest`/`GameJoinedResult{sessionId}`,
+  `LoginResult`/`ErrorResult`) are unchanged. Game structs:
   `MoveRequest{fromRow, fromCol, toRow, toCol}`, `JumpRequest{row, col}`,
   `GameViewMessage{GameView view}` (wraps the DTO snapshot directly, calling its own
-  `toJson()`/`fromJson()`), `GameStartedMessage`/`GameOverMessage` (empty payloads,
-  only the `"type"` tag carries information — mirroring `GameStartedEvent`/
-  `GameOverEvent`, which are likewise empty). `readType(json)` is unchanged.
+  `toJson()`/`fromJson()`), `GameStartedMessage`, `GameOverMessage{reason, winnerUserId}`
+  (both fields optional/empty for an ordinary king-capture ending; populated for a
+  disconnect-timeout forfeit — see `GameSession::forfeitTo`). Matchmaking structs (new):
+  `FindGameRequest` (empty), `SearchingResult` (empty ack), `MatchFoundResult{sessionId,
+  color, opponentUsername, GameView view}` (used both for a fresh match and for a
+  reconnect resume), `NoMatchResult` (empty), `OpponentDisconnectedMessage`/
+  `OpponentReconnectedMessage` (empty). `PieceColor` (used by `MatchFoundResult.color`)
+  is serialized via the same `NLOHMANN_JSON_SERIALIZE_ENUM` registration
+  `common/enums/EnumJson.h` already provides. `readType(json)` is unchanged.
 
-### `server/` — persistence + game engine + WebSocket networking
+### `server/` — persistence + matchmaking + game engine + WebSocket networking
 
 - `server/src/persistence/*` — unchanged: `UserRecord`, `Database`, `UserRepository`
-  (passwords still plain text, deliberately postponed).
+  (passwords still plain text, deliberately postponed). `UserRepository::updateScore`
+  is now also called from `GameSessionManager`'s forfeit-score callback (see below), not
+  just from wherever else it might be used.
 - `server/src/services/AuthService` — unchanged: thin, networking-agnostic wrapper
   around `UserRepository`, its own mutex (shared SQLite connection, called
   concurrently once wired into `WebSocketServer`).
-- `server/src/game/` — the domain simulation, moved here from `src/logic/*` verbatim
-  (see Module map / Core domain model / Rules system / Real-time mechanics above for
-  what actually lives here — nothing about the rules/timing/mechanics changed, only
-  the location and `Controller`'s pixel-facing surface, which was removed).
-- `server/src/services/GameSession` — **new**. Owns one `EventBus` + one `GameEngine`
-  (built via `GameFactory::createNewGame`) + one `Controller` — this is the seam where
-  "UI and logic talk in-process" became "network client and authoritative server talk
-  over JSON." Publishes `GameStartedEvent` itself right after construction (the same
-  contract the old `main.cpp` used to fulfill manually) and subscribes handlers for
-  all four `Events.h` types: `GameStartedEvent`/`GameOverEvent` map to their matching
-  protocol message; `MoveExecutedEvent`/`PieceCapturedEvent` (which have no dedicated
-  wire message) instead trigger a fresh `GameViewMessage` broadcast, since that already
-  conveys the resulting state fully — no need to invent a redundant per-event message
-  shape. Every public method (`requestMove`/`requestJump`/`tick`/`getGameView`/
-  `isGameOver`) locks its own `std::mutex` — genuinely necessary, not defensive
-  filler: the server's tick-loop thread and a request-handling thread can both call
-  into the same session's `GameEngine`, which has no locking of its own (same category
-  of problem `AuthService`'s mutex already solves for `UserRepository`'s shared
-  connection).
-- `server/src/services/GameSessionManager` — **new**. Owns every active `GameSession`
-  keyed by id, guarded by its own separate mutex (the map itself, not any one
-  session's game state, is what needs protecting here — the tick loop iterates this
-  map while a request-handling thread can concurrently insert into it via
-  `getOrCreateDefaultSession`). Today only ever exposes one implicit session; this is
-  the extension point for real multi-game support later (a pure addition — real
-  `join`/`create`-by-id is additive on top of an already-real id→session map, not a
-  redesign).
-- `server/src/handlers/GameRequestHandler` — **new**, parallel to
-  `AuthRequestHandler`: dispatches `join_game`/`move`/`jump` to
-  `GameSessionManager`/`GameSession`, returns a fresh `protocol::GameViewMessage`
-  snapshot after every `move`/`jump` (this is currently the *only* way a client's view
-  actually updates — see "Current state of integration" above for the real limitation
-  this implies), `ErrorResult` on anything malformed. Never throws.
+- `server/src/services/ConnectionRegistry` — **new**. Mutex-guarded `connectionId ->
+  {userId, username, score}` (plus the reverse `userId -> connectionId`), populated
+  only by `AuthRequestHandler` on a successful `login` (`register` never authenticates
+  a connection). This is the identity binding every later request on that connection is
+  checked against — nothing ever trusts a client-claimed user id. `onDisconnected`
+  clears both directions on a WebSocket close.
+- `server/src/services/Matchmaker` — **new**. A plain mutex-guarded vector of `{
+  connectionId, userId, username, score, enqueuedAtMs}` entries. `tick(nowMs, onMatched,
+  onTimedOut)` (called every server tick, see below) repeatedly pairs the
+  earliest-queued entry with the closest-score entry still queued within
+  `MatchmakingConfig::SCORE_RANGE` (removing both) — `Match::first` is always the
+  earlier-enqueued of the pair, which is exactly how "White = whoever entered first" is
+  guaranteed with no extra bookkeeping — then reports (and dequeues) anything that's
+  waited past `MatchmakingConfig::MAX_WAIT_MILLIS` via `onTimedOut`. No thread of its
+  own; driven off the same tick cadence as `GameSessionManager::tickAll`.
+- `server/src/game/` — the domain simulation (unchanged by this round of work — see
+  Module map / Core domain model / Rules system / Real-time mechanics above), plus one
+  small addition: `Controller::pieceColorAt(Position) -> PieceColor` (`None` if empty/
+  out of bounds), added specifically so `GameSession` can check piece ownership before
+  ever calling `move()`/`jump()`.
+- `server/src/services/GameSession` — owns one `EventBus` + one `GameEngine` (built via
+  `GameFactory::createNewGame`) + one `Controller`, **plus** its two participants:
+  `Player{userId, username, connectionId}` for `white`/`black` (`connectionId` mutable —
+  replaced on reconnect), a per-color `xDisconnectedAtMs` (0 = connected), and a
+  `finished` flag. Publishes `GameStartedEvent` itself right after construction (same
+  contract the old `main.cpp` used to fulfill manually) and subscribes handlers for all
+  four `Events.h` types, same as before, except every push now goes through
+  `sendToParticipants(json)` — which calls the injected `SendToFn` for each of `white`/
+  `black` **only if that slot isn't currently marked disconnected** — instead of a
+  global `broadcast`. Key methods:
+  - `requestMove(connectionId, from, to)` / `requestJump(connectionId, position)` —
+    resolve the requester's color from `connectionId` (`unknown_connection` if it
+    matches neither participant), check `controller.pieceColorAt(from-or-position)`
+    against that color (`not_your_piece` if it doesn't match), and only then delegate to
+    `controller.move`/`jump`. Returns a `CommandOutcome{accepted, reason}` instead of
+    `void` — this is the actual "no one may move the other color" enforcement.
+  - `tick(milliseconds)` — advances the engine as before, pushes a `GameViewMessage` to
+    both connected participants, then checks (using `nowMillis()`, wall-clock, not the
+    engine's own logical clock) whether a disconnected slot has exceeded
+    `MatchmakingConfig::RECONNECT_GRACE_MILLIS`; if so, calls `forfeitTo(winner, loser)`.
+  - `markDisconnected(connectionId)` / `markReconnected(userId, newConnectionId)` —
+    flip a slot's disconnected timestamp and push `opponent_disconnected` (to whoever's
+    left connected) / `opponent_reconnected` (to the *other* participant specifically,
+    not back to the one who just reconnected).
+  - `forfeitTo(winner, loser)` — sets `finished`, applies
+    `MatchmakingConfig::SCORE_DELTA_WIN`/`_LOSS` via the injected `ScoreUpdateFn`, pushes
+    `GameOverMessage{"opponent_disconnected", winner.userId}`.
+  - `resumeInfoFor(userId) -> optional<ResumeInfo{color, opponentUsername}>` — lets
+    `AuthRequestHandler` rebuild a `MatchFoundResult` for a reconnecting player without
+    reaching into this class's internals.
+  - `isFinished()` covers *both* endings (king capture and forfeit) — `GameSessionManager`
+    uses it as the one signal for "safe to drop this session."
+  - Every public method still locks its own `std::mutex`, for the same reason as before
+    (tick-loop thread + request-handling thread both touch the same `GameEngine`).
+- `server/src/services/GameSessionManager` — owns every active `GameSession` keyed by
+  id, plus two reverse indexes (`connectionId -> sessionId`, `userId -> sessionId`) for
+  O(1) lookup, all behind its own mutex. `getOrCreateDefaultSession` is gone —
+  `createSession(whitePlayer, blackPlayer)` is the only way a session comes into being,
+  called only from a `Matchmaker` match. `findSessionByConnection`/`findSessionByUserId`
+  back `GameRequestHandler`'s dispatch and `AuthRequestHandler`'s reconnect check.
+  `rebindConnection(userId, newConnectionId)` and `onConnectionClosed(connectionId)`
+  (which also drops that connection's index entry, so a stale route can never linger)
+  wire reconnect/disconnect through to the right `GameSession`. `tickAll` now also
+  removes any session `isFinished()` reports, along with its index entries. Constructed
+  with a `SendToFn` (shared by every session it creates) and a `UserRepository&` (used
+  to build each session's `ScoreUpdateFn`).
+- `server/src/handlers/AuthRequestHandler` — on a successful `login`, also (1) records
+  `connectionId -> user` in `ConnectionRegistry`, and (2) checks
+  `GameSessionManager::findSessionByUserId` — if this user already has an active
+  session (a reconnect), rebinds it and pushes a `MatchFoundResult`-shaped resume via an
+  injected `SendFn`, *before* returning the `login_result` reply (so it's guaranteed to
+  arrive first on the same connection). This is what makes it safe for the client to
+  always auto-`find_game` right after a successful login — a returning player is
+  already back in their game by the time that request would arrive.
+- `server/src/handlers/MatchmakingRequestHandler` — **new**, parallel to
+  `AuthRequestHandler`/`GameRequestHandler`: `find_game` requires an authenticated
+  connection (`ConnectionRegistry`) with no existing session
+  (`already_in_game` otherwise) and enqueues it into `Matchmaker`, replying with
+  `SearchingResult` — the actual `match_found`/`no_match` outcome is always a later,
+  unsolicited push from the tick loop (see below), never this handler's synchronous
+  reply.
+- `server/src/handlers/GameRequestHandler` — dispatches `move`/`jump` by resolving
+  `GameSessionManager::findSessionByConnection(connectionId)` first (`no_active_game` if
+  none), then calling the connection-aware `requestMove`/`requestJump` and translating a
+  rejected `CommandOutcome` into `ErrorResult{reason}`. Never throws.
 - **Server-owned tick loop** (`server/src/main.cpp`) — a detached `std::thread`
   sleeping `TimingConfig::SERVER_TICK_INTERVAL_MILLIS` then calling
-  `sessionManager.tickAll(...)`, forever, for the life of the process. This replaces
-  the old `GameLoop`-driven wall-clock `controller.wait(deltaMs)` call — the
-  authoritative clock now advances whether or not any client is even connected.
-- `server/src/main.cpp` also composes `AuthRequestHandler` and `GameRequestHandler`
-  behind one `dispatch()` function: tries the auth handler first, only falls back to
-  the game handler if the auth handler's response is specifically
-  `{"type":"error","error":"unknown_type"}` — so neither handler needs to know the
-  other's message-type set; adding a new type to either one never requires touching
-  this dispatch.
+  `sessionManager.tickAll(...)` *and* `matchmaker.tick(nowMillis(), onMatched,
+  onTimedOut)`, forever. `onMatched` calls `sessionManager.createSession` and
+  `server.sendTo`s each side a `MatchFoundResult`; `onTimedOut` `sendTo`s
+  `NoMatchResult`. This one thread is the only place `GameSessionManager` and
+  `Matchmaker` are advanced — both are otherwise inert data structures reacted to by
+  request-handling threads.
+- `server/src/main.cpp` composes `AuthRequestHandler`, `MatchmakingRequestHandler`, and
+  `GameRequestHandler` behind one `dispatch()` function: tries auth, then matchmaking,
+  then game, falling through only on `{"type":"error","error":"unknown_type"}` — so no
+  handler needs to know another's message-type set. `server.setCloseHandler` notifies
+  `ConnectionRegistry`, `Matchmaker::removeByConnection`, and
+  `GameSessionManager::onConnectionClosed` for every dropped connection.
 - `server/CMakeLists.txt` — see "Build system" above for the full target graph.
   `KungFuChessGameSession` is deliberately its own target, not folded into
   `KungFuChessAuth`, even though both live under `src/services/` — a library named
   "Auth" building `GameSession` would be a misleading name for what it contains.
 
-### `client/` — CLI client (unchanged) + GUI client (new, the actual game)
+### `client/` — one executable, three phases over one connection
 
-- `client/src/network/WebSocketClient` — mostly unchanged; gained one new method,
-  `setOnMessage(MessageHandler)`, letting the message handler be replaced after
-  construction (needed so `GameClient`, which doesn't exist yet when `WebSocketClient`
-  is first constructed, can register itself once it does).
-- `client/src/cli/CliShell` + `client/src/main.cpp` — unchanged: the interactive
-  auth-only CLI (`register`/`login`/`help`/`quit`), still a text-based stand-in from
-  before the GUI existed.
-- `client/src/ui/*` + `client/src/game/{BoardMapper,GameClient}` + `client/src/gui_main.cpp`
-  — the actual playable client; see "UI / rendering layer" and "`client/src/game/`"
-  above for the full breakdown, and "Current state of integration" for how they're
-  wired together and run.
+- `client/src/network/WebSocketClient` — unchanged; `setOnMessage(MessageHandler)`
+  lets the message handler be replaced after construction, which is exactly how control
+  hands off between phases: `CliShell` installs itself first (auth), `main.cpp`'s
+  `waitForMatch` installs itself next (matchmaking), and `GameClient` installs itself
+  last (the game) — each one fully replacing the last, never composing handlers.
+- `client/src/cli/CliShell` — the auth phase. `run()` installs its own message handler,
+  prints server responses, and specifically blocks (via a `std::condition_variable`,
+  with a timeout) on the `login_result` that follows a `login` command, so it can return
+  a `LoginOutcome{loggedIn, userId, username, score, resumedMatch}` to the caller instead
+  of firing the request and leaving it to guess. `resumedMatch` is populated if a
+  `match_found` push (a reconnect resume — always delivered before `login_result` on the
+  same connection, see `AuthRequestHandler` above) arrived during the same login.
+  `register` is fire-and-forget as before (it never authenticates the connection).
+- `client/src/main.cpp` — the whole client entry point now (`gui_main.cpp` is gone).
+  Connects, runs `CliShell::run()`; if not logged in, exits. If `resumedMatch` was
+  already populated, skips matchmaking entirely and goes straight to the game. Otherwise
+  calls `waitForMatch` (installs its own handler, sends `FindGameRequest`, blocks on a
+  condition variable for `match_found`/`no_match`, auto-retrying — after the user
+  presses Enter — on a `no_match`). Once matched, `runGame` constructs `GameClient` (with
+  the match's initial `GameView`) and the same `BoardCanvas`/`SpriteManager`/
+  `AnimationFrame`/`Renderer`/`GameLoop` stack `gui_main.cpp` used to build, then runs
+  `GameLoop`.
+- `client/src/ui/*` + `client/src/game/{BoardMapper,GameClient}` — unchanged in their
+  own right; see "UI / rendering layer" and "`client/src/game/`" above.
 
-Not yet done: real server→client push (see "Current state of integration" above);
-real multi-session join/create by id (`GameSessionManager` is ready for it, nothing
-calls it yet); password hashing; `wss://`/TLS; request/response correlation IDs (fine
-today since each client only ever has one request in flight at a time — `GameLoop`'s
-click handling is synchronous with respect to the UI thread); reconnect/resume-session
-handling if a client's connection drops mid-game.
+Not yet done: password hashing; `wss://`/TLS; request/response correlation IDs (fine
+today since each client only ever has one request in flight at a time); session
+persistence across a server restart; spectators; resign/draw; ELO-style rating.
 
 ## Known gaps / things to be careful about when editing
 
 1. ~~Logic layer isn't wired into the graphical executable~~ — long since fixed, and
    then superseded entirely: the graphical executable itself (the old local, no-network
-   `KungFuChess`) is now retired. The one graphical executable that exists,
-   `KungFuChessGuiClient`, is wired into the server over the network instead.
+   `KungFuChess`) is now retired, and so is the later GUI-only `KungFuChessGuiClient` —
+   the one client executable, `KungFuChessClient`, runs auth then matchmaking then the
+   game pane, all over the network, in one process.
 2. ~~`BoardView(const Board&)` produces a wrongly-ordered/sparse vector~~ — fixed, and
    unaffected by the client/server split (this constructor still only ever runs
    server-side, since only the server has a real `Board` to convert from).
@@ -597,7 +736,8 @@ handling if a client's connection drops mid-game.
 6. ~~Cell-pixel size (`100`) hardcoded independently in three places~~ — fixed as part
    of the client/server split: `common/Config/BoardConfig::CELL_SIZE` is now the single
    source of truth for `BoardMapper`, `CoordinateConverter`, and the
-   `BoardCanvas`/`SpriteManager` construction calls in `gui_main.cpp`.
+   `BoardCanvas`/`SpriteManager` construction calls in `client/src/main.cpp` (moved here
+   from the now-deleted `gui_main.cpp`).
 7. `config.json` (animation/physics metadata) and `board.csv` still exist on disk but
    are parsed by no current code, unaffected by the split.
 8. No check/checkmate/castling/en-passant/stalemate — only raw movement legality plus
@@ -612,12 +752,29 @@ handling if a client's connection drops mid-game.
    (which depended on the now-removed `BoardMapper`-in-`Controller` pixel translation).
 10. Dead code: a large commented-out earlier `Img::draw_on` implementation still sits
     in `client/src/ui/img.cpp`, unaffected by the split.
-11. **New, from the client/server split**: no real server→client push transport yet —
-    see "Current state of integration" above. This is the biggest remaining gap in the
-    networked design; everything else in this list is a pre-existing, smaller issue.
-12. **New**: `common/DTO`'s converting-from-domain constructors must stay in their own
+11. ~~No real server→client push transport~~ — fixed: `WebSocketServer::sendTo`/
+    `broadcast` plus per-`GameSession` participant connection ids give real, targeted,
+    continuous push (see "Server / persistence / networking layer" above).
+12. `common/DTO`'s converting-from-domain constructors must stay in their own
     separate `*FromDomain.cpp` files, not be merged back into each DTO's main `.cpp` —
     see "DTO layer" above for exactly why, and what silently breaks if this is ignored.
+13. **New, from the auth-gated matchmaking change**: matchmaking queue state, session
+    state, and the connection/user-id indexes in `ConnectionRegistry`/
+    `GameSessionManager` are all plain in-memory containers with no persistence — a
+    server restart silently drops every queued player and every in-progress game (only
+    SQLite-backed scores survive). This is an accepted, deliberate limitation for now
+    (see "Current state of integration"), not an oversight — the natural next step for
+    a real multi-node/cloud deployment is to make these two services swappable for a
+    shared store (Redis or similar) behind the same method signatures, since neither
+    touches networking types directly today.
+14. **New**: a reconnect (`AuthRequestHandler`'s `login`-time check) racing the same
+    session's forfeit-by-timeout (`GameSession::tick`, on the server's tick thread) is
+    last-writer-wins, not arbitrated — an accepted edge case at this scale, flagged here
+    so it isn't mistaken for an oversight later.
+15. **New**: `GameSession::tick`'s disconnect-grace check uses `nowMillis()`
+    (`common/MonotonicClock.h`, wall-clock `steady_clock`), completely independent of
+    the `milliseconds` argument that advances the game engine's own logical clock —
+    easy to conflate when reading `tick()`, since both fire from the same call.
 
 ## Where to look for X
 
@@ -629,6 +786,7 @@ handling if a client's connection drops mid-game.
 | Change what happens when a move completes (capture, promotion, game-over) | `server/src/game/Engine/GameEngine.cpp` (`executeMove`) |
 | Change click/selection UX (server-side REPL) | `server/src/game/Controller/Controller.cpp` (`click`) |
 | Change the direct from/to move command the network uses | `server/src/game/Controller/Controller.cpp` (`move`), `server/src/handlers/GameRequestHandler.cpp` |
+| Change who's allowed to move/jump which piece | `server/src/game/Controller/Controller.cpp` (`pieceColorAt`), `server/src/services/GameSession.cpp` (`requestMove`/`requestJump`); tests in `server/tests/game_session_test.cpp`, `server/tests/game_request_handler_test.cpp` |
 | Change client-side click-to-select-then-move UX | `client/src/game/GameClient.cpp` (`handlePixelClick`) |
 | Parse/print board text (REPL only, not production setup) | `server/src/game/IO/BoardParser.cpp` / `BoardPrinter.cpp` |
 | Change the initial/starting board setup | `server/src/game/IO/GameFactory.cpp` (`createClassicBoard`) |
@@ -642,8 +800,12 @@ handling if a client's connection drops mid-game.
 | Change the `users` table / user persistence | `server/src/persistence/Database.cpp` (schema), `server/src/persistence/UserRepository.cpp`; tests in `server/tests/user_repository_test.cpp` |
 | Change register/login business logic (not the DB rows) | `server/src/services/AuthService.cpp`; tests in `server/tests/auth_service_test.cpp` |
 | Change game-session hosting, tick behavior, or session lookup | `server/src/services/GameSession.cpp`/`GameSessionManager.cpp`; tests in `server/tests/game_session_test.cpp` |
+| Change matchmaking pairing rules, wait timeout, or score range | `common/Config/MatchmakingConfig.h`, `server/src/services/Matchmaker.cpp`; tests in `server/tests/matchmaker_test.cpp` |
+| Change disconnect-grace duration or forfeit score deltas | `common/Config/MatchmakingConfig.h`, `server/src/services/GameSession.cpp` (`tick`, `forfeitTo`) |
+| Change reconnect detection/resume behavior | `server/src/handlers/AuthRequestHandler.cpp` (the `login` branch), `server/src/services/GameSessionManager.cpp` (`rebindConnection`), `server/src/services/GameSession.cpp` (`markReconnected`, `resumeInfoFor`) |
+| Change the auth/matchmaking/game/CLI/GUI hand-off order on the client | `client/src/main.cpp` |
 | Change the JSON wire format for a message | `protocol/include/protocol/Message.h` (field names, `toJson`/`fromJson`), `protocol/include/protocol/MessageType.h` (the `"type"` string); round-trip tests in `protocol/tests/message_test.cpp` |
 | Add a DTO's own `toJson`/`fromJson`, or change one | `common/DTO/<Type>.h`/`.cpp` — but keep any converting-from-domain constructor in `<Type>FromDomain.cpp` (see DTO layer / Gaps #12 above) |
-| Add a new WebSocket message type/command | `server/src/handlers/GameRequestHandler.cpp` (or `AuthRequestHandler.cpp`) for dispatch, `protocol/include/protocol/Message.h`/`MessageType.h` for the new request/result structs, `client/src/game/GameClient.cpp` or `client/src/cli/CliShell.cpp` for the client side — `WebSocketServer`/`WebSocketClient` themselves don't need to change for a new message type |
-| Change how the server binds/accepts WebSocket connections, or add real server push | `server/src/network/WebSocketServer.cpp` (the only file including ixwebsocket's server headers) — see Gaps #11 for why this is the natural next piece of work |
-| Change how the GUI/CLI client connects or sends/receives | `client/src/network/WebSocketClient.cpp` (the only file including ixwebsocket's client headers) |
+| Add a new WebSocket message type/command | `server/src/handlers/GameRequestHandler.cpp` (or `AuthRequestHandler.cpp`/`MatchmakingRequestHandler.cpp`) for dispatch, `protocol/include/protocol/Message.h`/`MessageType.h` for the new request/result structs, `client/src/game/GameClient.cpp` or `client/src/cli/CliShell.cpp` for the client side — `WebSocketServer`/`WebSocketClient` themselves don't need to change for a new message type |
+| Change how the server binds/accepts WebSocket connections, sends targeted/broadcast pushes, or reports drops | `server/src/network/WebSocketServer.cpp` (the only file including ixwebsocket's server headers) |
+| Change how the client connects or sends/receives | `client/src/network/WebSocketClient.cpp` (the only file including ixwebsocket's client headers) |

@@ -56,11 +56,22 @@ file(GLOB GAME_SESSION_HEADERS "src/services/GameSession.h" "src/services/GameSe
 
 add_library(KungFuChessGameSession STATIC ${GAME_SESSION_SOURCES} ${GAME_SESSION_HEADERS})
 target_include_directories(KungFuChessGameSession PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(KungFuChessGameSession PUBLIC KungFuChessGame KungFuChessProtocol)
+# KungFuChessPersistence added for UserRepository -- GameSessionManager takes
+# one directly so it can hand every GameSession it creates a ScoreUpdateFn
+# closing over it (see GameSessionManager::createSession), for forfeit-by-
+# disconnect score deltas.
+target_link_libraries(KungFuChessGameSession PUBLIC KungFuChessGame KungFuChessProtocol KungFuChessPersistence)
 
 # ---- Network layer (request handlers + the WebSocket server wrapper) ----
-file(GLOB NETWORK_SOURCES "src/handlers/*.cpp" "src/network/*.cpp")
-file(GLOB NETWORK_HEADERS "src/handlers/*.h" "src/network/*.h")
+# ConnectionRegistry/Matchmaker live under src/services/ alongside GameSession
+# (they're services in the same sense), but are compiled into this library
+# specifically -- neither depends on KungFuChessGame/KungFuChessGameSession at
+# all, and the handlers that do need them (AuthRequestHandler,
+# MatchmakingRequestHandler) already live here.
+file(GLOB NETWORK_SOURCES "src/handlers/*.cpp" "src/network/*.cpp"
+    "src/services/ConnectionRegistry.cpp" "src/services/Matchmaker.cpp")
+file(GLOB NETWORK_HEADERS "src/handlers/*.h" "src/network/*.h"
+    "src/services/ConnectionRegistry.h" "src/services/Matchmaker.h")
 
 add_library(KungFuChessNetwork STATIC ${NETWORK_SOURCES} ${NETWORK_HEADERS})
 target_include_directories(KungFuChessNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)

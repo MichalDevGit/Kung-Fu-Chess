@@ -1,12 +1,14 @@
 #include "GameClient.h"
 
+#include <iostream>
 #include <nlohmann/json.hpp>
 
 #include "protocol/Message.h"
 #include "protocol/MessageType.h"
 
-GameClient::GameClient(WebSocketClient& client)
+GameClient::GameClient(WebSocketClient& client, const GameView& initialView)
     : client(client),
+      latestView(initialView),
       hasSelection(false),
       selectedPosition(0, 0),
       gameOver(false)
@@ -15,8 +17,6 @@ GameClient::GameClient(WebSocketClient& client)
         {
             onMessage(json);
         });
-
-    client.send(protocol::JoinGameRequest{}.toJson());
 }
 
 void GameClient::handlePixelClick(const PixelPosition& pixelPosition)
@@ -114,20 +114,26 @@ void GameClient::onMessage(const std::string& json)
             std::lock_guard<std::mutex> lock(mutex);
             latestView = message.view;
         }
-        else if (type == protocol::MessageType::GameJoined)
-        {
-            // Carries the session's current GameView so the board isn't
-            // empty until this client's own first move/jump request
-            // round-trips one back -- see GameJoinedResult in Message.h.
-            protocol::GameJoinedResult message = protocol::GameJoinedResult::fromJson(parsed);
-
-            std::lock_guard<std::mutex> lock(mutex);
-            latestView = message.view;
-        }
         else if (type == protocol::MessageType::GameOver)
         {
+            protocol::GameOverMessage message = protocol::GameOverMessage::fromJson(parsed);
+
+            if (!message.reason.empty())
+                std::cout << "\nGame over: " << message.reason << "\n";
+
             std::lock_guard<std::mutex> lock(mutex);
             gameOver = true;
+        }
+        else if (type == protocol::MessageType::OpponentDisconnected)
+        {
+            // Console-only status line -- no rendering work for this yet,
+            // the board keeps updating normally (the server's tick loop
+            // doesn't pause on a drop, see GameSession::tick).
+            std::cout << "\nOpponent disconnected -- waiting for them to reconnect...\n";
+        }
+        else if (type == protocol::MessageType::OpponentReconnected)
+        {
+            std::cout << "\nOpponent reconnected.\n";
         }
 
         // GameStarted/Error: nothing this class tracks yet; parsing them

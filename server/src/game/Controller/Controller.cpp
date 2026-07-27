@@ -77,6 +77,17 @@ void Controller::move(const Position& from, const Position& to)
     gameEngine.requestMove(from, to);
 }
 
+PieceColor Controller::pieceColorAt(const Position& position) const
+{
+    const Board& board = gameEngine.getGameState().getBoard();
+
+    if (!board.isValidPosition(position))
+        return PieceColor::None;
+
+    const Piece* piece = board.getPiece(position);
+    return piece != nullptr ? piece->getColor() : PieceColor::None;
+}
+
 bool Controller::hasSelectedPiece() const
 {
     return hasSelection;

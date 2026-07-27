@@ -15,7 +15,12 @@
 // network to the authoritative server instead of touching a local
 // GameEngine. Registers itself as the WebSocketClient's message handler at
 // construction (via WebSocketClient::setOnMessage -- the client must already
-// exist and be connected by then) and immediately sends a JoinGameRequest.
+// exist and be connected by then), replacing whatever handler was installed
+// before it (CliShell during the auth/matchmaking phase -- see
+// client/src/main.cpp). Takes the match's initial GameView directly (from
+// MatchFoundResult, which is how the client actually learns a match/session
+// exists at all now -- there is no more join_game round trip) rather than
+// starting from an empty board and waiting for the first server push.
 //
 // Owns the client-only BoardMapper: pixel math is a rendering concern the
 // server has no reason to know about (see server/src/game/Controller, which
@@ -41,7 +46,7 @@
 class GameClient
 {
 public:
-    explicit GameClient(WebSocketClient& client);
+    GameClient(WebSocketClient& client, const GameView& initialView);
 
     void handlePixelClick(const PixelPosition& pixelPosition);
     void handlePixelJump(const PixelPosition& pixelPosition);

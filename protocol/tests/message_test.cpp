@@ -4,30 +4,6 @@
 
 using namespace protocol;
 
-TEST_CASE("JoinGameRequest round-trips through JSON")
-{
-    JoinGameRequest request;
-
-    nlohmann::json j = nlohmann::json::parse(request.toJson());
-
-    CHECK(readType(j) == MessageType::JoinGame);
-
-    JoinGameRequest parsed = JoinGameRequest::fromJson(j);
-    (void)parsed;
-}
-
-TEST_CASE("GameJoinedResult round-trips through JSON")
-{
-    GameJoinedResult result{"session-42"};
-
-    nlohmann::json j = nlohmann::json::parse(result.toJson());
-
-    CHECK(readType(j) == MessageType::GameJoined);
-
-    GameJoinedResult parsed = GameJoinedResult::fromJson(j);
-    CHECK(parsed.sessionId == "session-42");
-}
-
 TEST_CASE("MoveRequest round-trips through JSON")
 {
     MoveRequest request{6, 4, 5, 4};
@@ -119,4 +95,61 @@ TEST_CASE("GameViewMessage round-trips a full GameView snapshot through JSON")
     CHECK(parsed.view.getSelectedPosition().getRow() == 0);
     CHECK(parsed.view.getSelectedPosition().getCol() == 0);
     CHECK(parsed.view.getCurrentTime() == 1234);
+}
+
+TEST_CASE("FindGameRequest round-trips through JSON")
+{
+    FindGameRequest request;
+
+    nlohmann::json j = nlohmann::json::parse(request.toJson());
+
+    CHECK(readType(j) == MessageType::FindGame);
+}
+
+TEST_CASE("SearchingResult round-trips through JSON")
+{
+    SearchingResult result;
+
+    nlohmann::json j = nlohmann::json::parse(result.toJson());
+
+    CHECK(readType(j) == MessageType::Searching);
+}
+
+TEST_CASE("MatchFoundResult round-trips through JSON")
+{
+    PieceView piece(1, PieceType::King, PieceColor::White, PieceState::Idle, PositionView(0, 0));
+    BoardView board(1, 1, std::vector<PieceView>{piece});
+    MotionView motion(false, PositionView(0, 0), PositionView(0, 0), 0, 0);
+    JumpView jump(false, PositionView(0, 0), 0, 0);
+    GameView view(board, motion, jump, std::vector<RestView>{}, false, PositionView(0, 0), 0);
+
+    MatchFoundResult result{"session-7", PieceColor::Black, "opponent1", view};
+
+    nlohmann::json j = nlohmann::json::parse(result.toJson());
+
+    CHECK(readType(j) == MessageType::MatchFound);
+
+    MatchFoundResult parsed = MatchFoundResult::fromJson(j);
+    CHECK(parsed.sessionId == "session-7");
+    CHECK(parsed.color == PieceColor::Black);
+    CHECK(parsed.opponentUsername == "opponent1");
+    CHECK(parsed.view.getBoard().getRows() == 1);
+}
+
+TEST_CASE("NoMatchResult round-trips through JSON")
+{
+    NoMatchResult result;
+
+    nlohmann::json j = nlohmann::json::parse(result.toJson());
+
+    CHECK(readType(j) == MessageType::NoMatch);
+}
+
+TEST_CASE("OpponentDisconnectedMessage and OpponentReconnectedMessage round-trip through JSON")
+{
+    nlohmann::json disconnected = nlohmann::json::parse(OpponentDisconnectedMessage{}.toJson());
+    CHECK(readType(disconnected) == MessageType::OpponentDisconnected);
+
+    nlohmann::json reconnected = nlohmann::json::parse(OpponentReconnectedMessage{}.toJson());
+    CHECK(readType(reconnected) == MessageType::OpponentReconnected);
 }

@@ -12,11 +12,12 @@ struct WebSocketServer::Impl
 {
     ix::WebSocketServer server;
     RequestHandler handler;
+    CloseHandler closeHandler;
 
     // Every currently-open connection, keyed by ConnectionState::getId(), so
-    // broadcast() can reach clients that never sent a request at all. Guarded
-    // by its own mutex, separate from anything game-related -- this class
-    // only ever tracks "who's connected," never game state.
+    // broadcast()/sendTo() can reach clients that never sent a request at
+    // all. Guarded by its own mutex, separate from anything game-related --
+    // this class only ever tracks "who's connected," never game state.
     std::mutex connectionsMutex;
     std::unordered_map<std::string, ix::WebSocket*> connections;
 
@@ -43,12 +44,17 @@ WebSocketServer::WebSocketServer(int port)
             }
             else if (msg->type == ix::WebSocketMessageType::Close)
             {
-                std::lock_guard<std::mutex> lock(impl->connectionsMutex);
-                impl->connections.erase(connectionState->getId());
+                const std::string connectionId = connectionState->getId();
+                {
+                    std::lock_guard<std::mutex> lock(impl->connectionsMutex);
+                    impl->connections.erase(connectionId);
+                }
+                if (impl->closeHandler)
+                    impl->closeHandler(connectionId);
             }
             else if (msg->type == ix::WebSocketMessageType::Message)
             {
-                const std::string response = impl->handler(msg->str);
+                const std::string response = impl->handler(connectionState->getId(), msg->str);
                 webSocket.send(response);
             }
         });
@@ -63,6 +69,11 @@ WebSocketServer::~WebSocketServer()
 void WebSocketServer::setRequestHandler(RequestHandler handler)
 {
     impl->handler = std::move(handler);
+}
+
+void WebSocketServer::setCloseHandler(CloseHandler handler)
+{
+    impl->closeHandler = std::move(handler);
 }
 
 void WebSocketServer::broadcast(const std::string& json)
@@ -81,6 +92,23 @@ void WebSocketServer::broadcast(const std::string& json)
         catch (const std::exception&)
         {
         }
+    }
+}
+
+void WebSocketServer::sendTo(const std::string& connectionId, const std::string& json)
+{
+    std::lock_guard<std::mutex> lock(impl->connectionsMutex);
+
+    const auto it = impl->connections.find(connectionId);
+    if (it == impl->connections.end())
+        return;
+
+    try
+    {
+        it->second->send(json);
+    }
+    catch (const std::exception&)
+    {
     }
 }
 

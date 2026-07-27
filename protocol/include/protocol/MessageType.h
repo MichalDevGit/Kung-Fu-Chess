@@ -13,14 +13,25 @@ namespace protocol
         inline constexpr const char* LoginResult = "login_result";
         inline constexpr const char* Error = "error";
 
-        // Game session / gameplay messages.
-        inline constexpr const char* JoinGame = "join_game";
-        inline constexpr const char* GameJoined = "game_joined";
+        // Game session / gameplay messages. There is no more join_game/
+        // game_joined -- a session now only ever comes into being via
+        // matchmaking (see MatchFound below), which already hands the
+        // client its initial GameView.
         inline constexpr const char* Move = "move";
         inline constexpr const char* Jump = "jump";
         inline constexpr const char* GameView = "game_view";
         inline constexpr const char* GameStarted = "game_started";
         inline constexpr const char* GameOver = "game_over";
+
+        // Matchmaking messages. FindGame is sent by the client immediately
+        // after a successful login; the outcome (MatchFound/NoMatch) is a
+        // later, unsolicited push -- see server/src/services/Matchmaker.
+        inline constexpr const char* FindGame = "find_game";
+        inline constexpr const char* Searching = "searching";
+        inline constexpr const char* MatchFound = "match_found";
+        inline constexpr const char* NoMatch = "no_match";
+        inline constexpr const char* OpponentDisconnected = "opponent_disconnected";
+        inline constexpr const char* OpponentReconnected = "opponent_reconnected";
     }
 }
 

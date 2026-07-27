@@ -7,6 +7,7 @@
 #include "../model/Position.h"
 #include "../IO/BoardPrinter.h"
 #include "../../../../common/DTO/GameView.h"
+#include "../../../../common/enums/PieceColor.h"
 
 class Controller
 {
@@ -25,6 +26,11 @@ public:
     // through click()'s selection state would risk misfiring against
     // whatever this Controller's selection happened to be at the time.
     void move(const Position& from, const Position& to);
+
+    // PieceColor::None if the square is empty or out of bounds -- used by
+    // GameSession to enforce that a connection can only move/jump its own
+    // color, before it ever calls move()/jump() above.
+    PieceColor pieceColorAt(const Position& position) const;
 
     bool hasSelectedPiece() const;
     Position getSelectedPosition() const;

@@ -1,9 +1,11 @@
 // KungFuChess server entry point: opens the SQLite-backed user database,
-// wires it through AuthService/AuthRequestHandler for auth requests, and
-// GameSessionManager/GameRequestHandler for game commands, both dispatched
-// from one WebSocket handler; also runs the server-owned tick loop that
-// advances every active GameSession's real-time clock independent of
-// whether any client happens to be connected right now.
+// wires it through AuthService/AuthRequestHandler for auth requests,
+// ConnectionRegistry/Matchmaker/MatchmakingRequestHandler for pairing
+// authenticated connections into matches, and GameSessionManager/
+// GameRequestHandler for game commands, all dispatched from one WebSocket
+// handler; also runs the server-owned tick loop that advances every active
+// GameSession's real-time clock and scans the matchmaking queue,
+// independent of whether any client happens to be connected right now.
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -12,44 +14,87 @@
 
 #include "handlers/AuthRequestHandler.h"
 #include "handlers/GameRequestHandler.h"
+#include "handlers/MatchmakingRequestHandler.h"
 #include "network/WebSocketServer.h"
 #include "persistence/Database.h"
 #include "persistence/UserRepository.h"
 #include "services/AuthService.h"
+#include "services/ConnectionRegistry.h"
 #include "services/GameSessionManager.h"
+#include "services/Matchmaker.h"
 #include "protocol/Message.h"
 #include "protocol/MessageType.h"
 #include "common/Config/NetworkConfig.h"
 #include "common/Config/TimingConfig.h"
+#include "common/MonotonicClock.h"
+#include "common/enums/PieceColor.h"
 
 namespace
 {
-// Tries the auth handler first; only falls back to the game handler when
-// the auth handler doesn't recognize the message type at all. This way
-// neither handler needs to know the other's message-type set -- adding a
-// new message type to either one never requires touching this dispatch.
-std::string dispatch(AuthRequestHandler& authHandler, GameRequestHandler& gameHandler, const std::string& requestJson)
+// Tries the auth handler first, then matchmaking, and only falls back to the
+// game handler when neither recognizes the message type. Each handler stays
+// ignorant of the others' message-type sets -- adding a new type to any one
+// of them never requires touching this dispatch.
+std::string dispatch(
+    AuthRequestHandler& authHandler,
+    MatchmakingRequestHandler& matchmakingHandler,
+    GameRequestHandler& gameHandler,
+    const std::string& connectionId,
+    const std::string& requestJson)
 {
-    const std::string authResponse = authHandler.handle(requestJson);
-    const nlohmann::json parsedAuthResponse = nlohmann::json::parse(authResponse);
+    auto isUnknownType = [](const std::string& responseJson)
+    {
+        const nlohmann::json parsed = nlohmann::json::parse(responseJson);
+        return parsed.value("type", std::string()) == protocol::MessageType::Error &&
+               parsed.value("error", std::string()) == "unknown_type";
+    };
 
-    const bool isUnknownToAuth =
-        parsedAuthResponse.value("type", std::string()) == protocol::MessageType::Error &&
-        parsedAuthResponse.value("error", std::string()) == "unknown_type";
+    const std::string authResponse = authHandler.handle(connectionId, requestJson);
+    if (!isUnknownType(authResponse))
+        return authResponse;
 
-    return isUnknownToAuth ? gameHandler.handle(requestJson) : authResponse;
+    const std::string matchmakingResponse = matchmakingHandler.handle(connectionId, requestJson);
+    if (!isUnknownType(matchmakingResponse))
+        return matchmakingResponse;
+
+    return gameHandler.handle(connectionId, requestJson);
 }
 
-// Runs forever on its own thread, advancing every active GameSession's clock
-// on a fixed interval -- replaces the old GameLoop-driven wall-clock
-// controller.wait(deltaMs) call, since the authoritative clock must now
-// advance even when no client is connected/rendering.
-void runTickLoop(GameSessionManager& sessionManager)
+// Runs forever on its own thread: advances every active GameSession's clock
+// on a fixed interval (replaces the old GameLoop-driven wall-clock
+// controller.wait(deltaMs) call, since the authoritative clock must advance
+// even when no client is connected/rendering) and scans the matchmaking
+// queue on the same cadence.
+void runTickLoop(GameSessionManager& sessionManager, Matchmaker& matchmaker, WebSocketServer& server)
 {
     while (true)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(TimingConfig::SERVER_TICK_INTERVAL_MILLIS));
         sessionManager.tickAll(TimingConfig::SERVER_TICK_INTERVAL_MILLIS);
+
+        matchmaker.tick(
+            nowMillis(),
+            [&](const Matchmaker::Match& match)
+            {
+                // match.first is always the earlier-enqueued of the pair
+                // (see Matchmaker::tick) -- White = entered first.
+                GameSession::Player white{match.first.userId, match.first.username, match.first.connectionId};
+                GameSession::Player black{match.second.userId, match.second.username, match.second.connectionId};
+
+                GameSession& session = sessionManager.createSession(white, black);
+
+                server.sendTo(
+                    match.first.connectionId,
+                    protocol::MatchFoundResult{session.getId(), PieceColor::White, match.second.username, session.getGameView()}.toJson());
+
+                server.sendTo(
+                    match.second.connectionId,
+                    protocol::MatchFoundResult{session.getId(), PieceColor::Black, match.first.username, session.getGameView()}.toJson());
+            },
+            [&](const Matchmaker::Entry& entry)
+            {
+                server.sendTo(entry.connectionId, protocol::NoMatchResult{}.toJson());
+            });
     }
 }
 }
@@ -60,26 +105,51 @@ int main()
     Database database(dbPath);
     UserRepository users(database);
     AuthService authService(users);
-    AuthRequestHandler authHandler(authService);
+    ConnectionRegistry connectionRegistry;
+    Matchmaker matchmaker;
 
-    // Constructed before GameSessionManager (and without a request handler
-    // yet -- see setRequestHandler below) specifically so the broadcast
-    // lambda passed to GameSessionManager can capture a real, already-
-    // existing server to push through, instead of the console-log stub this
-    // used to be.
+    // Constructed before GameSessionManager/AuthRequestHandler (and without
+    // a request handler yet -- see setRequestHandler below) specifically so
+    // the sendTo lambdas passed to them can capture a real, already-existing
+    // server to push through, instead of the console-log stub this used to be.
     WebSocketServer server(NetworkConfig::DEFAULT_PORT);
 
-    GameSessionManager sessionManager([&server](const std::string& json)
+    GameSessionManager sessionManager(
+        [&server](const std::string& connectionId, const std::string& json)
         {
-            server.broadcast(json);
+            server.sendTo(connectionId, json);
+        },
+        users);
+
+    // Needs sessionManager (to detect/resume a reconnecting player's
+    // existing session on login -- see the class comment) and a way to push
+    // that resume independent of login's own synchronous reply.
+    AuthRequestHandler authHandler(
+        authService,
+        connectionRegistry,
+        sessionManager,
+        [&server](const std::string& connectionId, const std::string& json)
+        {
+            server.sendTo(connectionId, json);
         });
+
+    MatchmakingRequestHandler matchmakingHandler(connectionRegistry, matchmaker, sessionManager);
     GameRequestHandler gameHandler(sessionManager);
 
-    std::thread tickThread(runTickLoop, std::ref(sessionManager));
+    std::thread tickThread(runTickLoop, std::ref(sessionManager), std::ref(matchmaker), std::ref(server));
     tickThread.detach();
 
-    server.setRequestHandler([&authHandler, &gameHandler](const std::string& requestJson)
-                              { return dispatch(authHandler, gameHandler, requestJson); });
+    server.setRequestHandler(
+        [&authHandler, &matchmakingHandler, &gameHandler](const std::string& connectionId, const std::string& requestJson)
+        { return dispatch(authHandler, matchmakingHandler, gameHandler, connectionId, requestJson); });
+
+    server.setCloseHandler(
+        [&connectionRegistry, &matchmaker, &sessionManager](const std::string& connectionId)
+        {
+            connectionRegistry.onDisconnected(connectionId);
+            matchmaker.removeByConnection(connectionId);
+            sessionManager.onConnectionClosed(connectionId);
+        });
 
     std::cout << "KungFuChess server listening on ws://" << NetworkConfig::DEFAULT_HOST
                << ":" << NetworkConfig::DEFAULT_PORT << "\n";
