@@ -1,12 +1,14 @@
 #include "tests/doctest.h"
 #include "services/Matchmaker.h"
+#include "services/LocalMatchQueueStore.h"
 #include "common/Config/MatchmakingConfig.h"
 
 #include <vector>
 
 TEST_CASE("Matchmaker pairs two queued entries within the score range, earliest-queued first")
 {
-    Matchmaker matchmaker;
+    LocalMatchQueueStore store;
+    Matchmaker matchmaker(store);
     matchmaker.enqueue(Matchmaker::Entry{"conn-a", 1, "alice", 1000, 100});
     matchmaker.enqueue(Matchmaker::Entry{"conn-b", 2, "bob", 1050, 200});
 
@@ -26,7 +28,8 @@ TEST_CASE("Matchmaker pairs two queued entries within the score range, earliest-
 
 TEST_CASE("Matchmaker does not pair entries whose scores are too far apart")
 {
-    Matchmaker matchmaker;
+    LocalMatchQueueStore store;
+    Matchmaker matchmaker(store);
     matchmaker.enqueue(Matchmaker::Entry{"conn-a", 1, "alice", 1000, 100});
     matchmaker.enqueue(Matchmaker::Entry{"conn-b", 2, "bob", 1000 + MatchmakingConfig::SCORE_RANGE + 1, 200});
 
@@ -43,7 +46,8 @@ TEST_CASE("Matchmaker does not pair entries whose scores are too far apart")
 
 TEST_CASE("Matchmaker times out an entry that has waited longer than MAX_WAIT_MILLIS with no match")
 {
-    Matchmaker matchmaker;
+    LocalMatchQueueStore store;
+    Matchmaker matchmaker(store);
     matchmaker.enqueue(Matchmaker::Entry{"conn-a", 1, "alice", 1000, 0});
 
     std::vector<Matchmaker::Entry> timedOut;
@@ -59,7 +63,8 @@ TEST_CASE("Matchmaker times out an entry that has waited longer than MAX_WAIT_MI
 
 TEST_CASE("Matchmaker::enqueue is idempotent per connection")
 {
-    Matchmaker matchmaker;
+    LocalMatchQueueStore store;
+    Matchmaker matchmaker(store);
     matchmaker.enqueue(Matchmaker::Entry{"conn-a", 1, "alice", 1000, 0});
     matchmaker.enqueue(Matchmaker::Entry{"conn-a", 1, "alice", 1000, 999});
 

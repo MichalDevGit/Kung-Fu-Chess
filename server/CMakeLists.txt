@@ -19,6 +19,62 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SQLiteCpp)
 
+# ---- Redis (Phase 1 of MIGRATION_PLAN.md: Redis-backed ConnectionRegistry/
+# Matchmaker/GameSessionManager index stores) ----
+# Unlike libpq/libpqxx below, hiredis is a small, pure-C, plain-CMake library
+# with no autoconf/bison/perl step, so it (and redis-plus-plus, the C++
+# wrapper built on it) really can be vendored-and-built-from-source under
+# MSVC unconditionally -- verified with a real build, not assumed.
+#
+# redis-plus-plus's own CMakeLists calls find_package(hiredis QUIET) itself
+# (see its cmake/FindHiredis.cmake) to locate hiredis -- CMake's FetchContent
+# has a built-in way to redirect that to fetched content (OVERRIDE_FIND_PACKAGE),
+# but it needs CMake >= 3.24, which the Docker/Linux build's apt-installed
+# cmake (Ubuntu 22.04 -> 3.22) doesn't meet. Instead, server/cmake/
+# Findhiredis.cmake is a hand-written Module-mode shim -- CMake tries Module
+# mode (any Find<Name>.cmake on CMAKE_MODULE_PATH) before Config mode for
+# any CMake version, so prepending server/cmake/ below makes redis-plus-plus's
+# find_package(hiredis) resolve to our own FetchContent-fetched hiredis
+# without any version floor.
+#
+# The header-staging step below (consumed by that Findhiredis.cmake shim)
+# works around one real mismatch: hiredis's own CMakeLists points consumers
+# of its in-tree `hiredis`/`hiredis::hiredis` target straight at its flat
+# source directory (so hiredis's *own* files can `#include "something.h"`
+# unprefixed) -- but redis-plus-plus's CMake hardcodes the *installed*
+# layout (`<include>/hiredis/hiredis.h`) when sniffing hiredis's version/
+# feature macros at configure time. Rather than require an actual
+# `cmake --install` step (which needs a completed build first -- a
+# chicken-and-egg problem for something needed at configure time), this
+# stages a copy of the public headers into that expected shape once, at
+# configure time; linking still goes through the real `hiredis::hiredis`
+# target, unaffected by this.
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+set(HIREDIS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(ENABLE_SSL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    hiredis
+    GIT_REPOSITORY https://github.com/redis/hiredis.git
+    GIT_TAG        v1.4.0
+)
+FetchContent_MakeAvailable(hiredis)
+
+set(HIREDIS_STAGED_INCLUDE_DIR "${CMAKE_BINARY_DIR}/hiredis_staged_include")
+file(MAKE_DIRECTORY "${HIREDIS_STAGED_INCLUDE_DIR}/hiredis")
+file(GLOB HIREDIS_PUBLIC_HEADERS "${hiredis_SOURCE_DIR}/*.h")
+file(COPY ${HIREDIS_PUBLIC_HEADERS} DESTINATION "${HIREDIS_STAGED_INCLUDE_DIR}/hiredis")
+
+set(REDIS_PLUS_PLUS_BUILD_TEST OFF CACHE BOOL "" FORCE)
+set(REDIS_PLUS_PLUS_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(REDIS_PLUS_PLUS_USE_TLS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    redis_plus_plus
+    GIT_REPOSITORY https://github.com/sewenew/redis-plus-plus.git
+    GIT_TAG        1.3.15
+)
+FetchContent_MakeAvailable(redis_plus_plus)
+
 # ---- Postgres (Phase 1 of MIGRATION_PLAN.md: PostgresUserRepository) ----
 # Optional, unlike SQLiteCpp/bcrypt above: libpqxx links against libpq (the
 # official Postgres C client), and libpq's own build (autoconf/make, needs
@@ -132,9 +188,11 @@ target_link_libraries(KungFuChessGame PUBLIC KungFuChessCommon)
 # live under src/services/ -- a library named "Auth" building GameSession
 # would be a misleading name for what it actually contains.
 file(GLOB GAME_SESSION_SOURCES "src/services/GameSession.cpp" "src/services/GameSessionManager.cpp"
-    "src/services/EloCalculator.cpp" "src/services/RatingService.cpp")
+    "src/services/EloCalculator.cpp" "src/services/RatingService.cpp"
+    "src/services/LocalSessionIndexStore.cpp" "src/services/RedisSessionIndexStore.cpp")
 file(GLOB GAME_SESSION_HEADERS "src/services/GameSession.h" "src/services/GameSessionManager.h"
-    "src/services/EloCalculator.h" "src/services/RatingService.h")
+    "src/services/EloCalculator.h" "src/services/RatingService.h"
+    "src/services/ISessionIndexStore.h" "src/services/LocalSessionIndexStore.h" "src/services/RedisSessionIndexStore.h")
 
 add_library(KungFuChessGameSession STATIC ${GAME_SESSION_SOURCES} ${GAME_SESSION_HEADERS})
 target_include_directories(KungFuChessGameSession PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -143,7 +201,7 @@ target_include_directories(KungFuChessGameSession PUBLIC ${CMAKE_CURRENT_SOURCE_
 # GameOutcomeFn closing over it (see GameSessionManager::createSession), for
 # both game-ending paths' ELO rating updates (GameSession::forfeitTo and its
 # GameOverEvent subscriber).
-target_link_libraries(KungFuChessGameSession PUBLIC KungFuChessGame KungFuChessProtocol KungFuChessPersistence)
+target_link_libraries(KungFuChessGameSession PUBLIC KungFuChessGame KungFuChessProtocol KungFuChessPersistence redis++_static)
 
 # ---- Network layer (request handlers + the WebSocket server wrapper) ----
 # ConnectionRegistry/Matchmaker live under src/services/ alongside GameSession
@@ -152,13 +210,19 @@ target_link_libraries(KungFuChessGameSession PUBLIC KungFuChessGame KungFuChessP
 # all, and the handlers that do need them (AuthRequestHandler,
 # MatchmakingRequestHandler) already live here.
 file(GLOB NETWORK_SOURCES "src/handlers/*.cpp" "src/network/*.cpp"
-    "src/services/ConnectionRegistry.cpp" "src/services/Matchmaker.cpp")
+    "src/services/ConnectionRegistry.cpp" "src/services/Matchmaker.cpp"
+    "src/services/LocalConnectionStore.cpp" "src/services/RedisConnectionStore.cpp"
+    "src/services/LocalMatchQueueStore.cpp" "src/services/RedisMatchQueueStore.cpp")
 file(GLOB NETWORK_HEADERS "src/handlers/*.h" "src/network/*.h"
-    "src/services/ConnectionRegistry.h" "src/services/Matchmaker.h")
+    "src/services/ConnectionRegistry.h" "src/services/Matchmaker.h"
+    "src/services/AuthenticatedUser.h" "src/services/IConnectionStore.h"
+    "src/services/LocalConnectionStore.h" "src/services/RedisConnectionStore.h"
+    "src/services/MatchmakingTypes.h" "src/services/IMatchQueueStore.h"
+    "src/services/LocalMatchQueueStore.h" "src/services/RedisMatchQueueStore.h")
 
 add_library(KungFuChessNetwork STATIC ${NETWORK_SOURCES} ${NETWORK_HEADERS})
 target_include_directories(KungFuChessNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(KungFuChessNetwork PUBLIC KungFuChessAuth KungFuChessGameSession KungFuChessProtocol ixwebsocket::ixwebsocket)
+target_link_libraries(KungFuChessNetwork PUBLIC KungFuChessAuth KungFuChessGameSession KungFuChessProtocol ixwebsocket::ixwebsocket redis++_static)
 
 # ---- Tests (persistence + auth service + game engine; no sockets involved) ----
 # GLOB_RECURSE so this also picks up tests/game_tests/**/*.cpp (moved from

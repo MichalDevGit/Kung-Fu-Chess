@@ -9,9 +9,11 @@
 #include <chrono>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <thread>
 
 #include <nlohmann/json.hpp>
+#include <sw/redis++/redis++.h>
 
 #include "handlers/AuthRequestHandler.h"
 #include "handlers/GameRequestHandler.h"
@@ -23,7 +25,16 @@
 #include "services/AuthService.h"
 #include "services/ConnectionRegistry.h"
 #include "services/GameSessionManager.h"
+#include "services/IConnectionStore.h"
+#include "services/IMatchQueueStore.h"
+#include "services/ISessionIndexStore.h"
+#include "services/LocalConnectionStore.h"
+#include "services/LocalMatchQueueStore.h"
+#include "services/LocalSessionIndexStore.h"
 #include "services/Matchmaker.h"
+#include "services/RedisConnectionStore.h"
+#include "services/RedisMatchQueueStore.h"
+#include "services/RedisSessionIndexStore.h"
 #include "protocol/Message.h"
 #include "protocol/MessageType.h"
 #include "common/Config/NetworkConfig.h"
@@ -123,8 +134,31 @@ int main()
         ? RepositoryFactory::createUserRepository(RepositoryBackend::Postgres, "", postgresUrl)
         : RepositoryFactory::createUserRepository(RepositoryBackend::Sqlite, dbPath);
     AuthService authService(*users);
-    ConnectionRegistry connectionRegistry;
-    Matchmaker matchmaker;
+
+    // KUNGFUCHESS_REDIS_URL is an explicit opt-in only (unset everywhere
+    // today) -- local/in-memory storage remains the actual default per
+    // MIGRATION_PLAN.md Phase 1 ("still passes today's tests unchanged").
+    // Setting it opts ConnectionRegistry/Matchmaker/GameSessionManager's
+    // lookup indexes into Redis all at once, sharing one connection;
+    // GameSessionManager's own `sessions` map of live GameSession objects
+    // stays in-process only either way.
+    const char* redisUrl = std::getenv("KUNGFUCHESS_REDIS_URL");
+    std::optional<sw::redis::Redis> redis;
+    if (redisUrl)
+        redis.emplace(redisUrl);
+
+    std::unique_ptr<IConnectionStore> connectionStore = redisUrl
+        ? std::unique_ptr<IConnectionStore>(std::make_unique<RedisConnectionStore>(*redis))
+        : std::unique_ptr<IConnectionStore>(std::make_unique<LocalConnectionStore>());
+    std::unique_ptr<IMatchQueueStore> matchQueueStore = redisUrl
+        ? std::unique_ptr<IMatchQueueStore>(std::make_unique<RedisMatchQueueStore>(*redis))
+        : std::unique_ptr<IMatchQueueStore>(std::make_unique<LocalMatchQueueStore>());
+    std::unique_ptr<ISessionIndexStore> sessionIndexStore = redisUrl
+        ? std::unique_ptr<ISessionIndexStore>(std::make_unique<RedisSessionIndexStore>(*redis))
+        : std::unique_ptr<ISessionIndexStore>(std::make_unique<LocalSessionIndexStore>());
+
+    ConnectionRegistry connectionRegistry(*connectionStore);
+    Matchmaker matchmaker(*matchQueueStore);
 
     // Constructed before GameSessionManager/AuthRequestHandler (and without
     // a request handler yet -- see setRequestHandler below) specifically so
@@ -138,7 +172,8 @@ int main()
         {
             server.sendTo(connectionId, json);
         },
-        *users);
+        *users,
+        *sessionIndexStore);
 
     // Needs sessionManager (to detect/resume a reconnecting player's
     // existing session on login -- see the class comment) and a way to push

@@ -1,6 +1,7 @@
 #include "tests/doctest.h"
 #include "handlers/GameRequestHandler.h"
 #include "services/GameSessionManager.h"
+#include "services/LocalSessionIndexStore.h"
 #include "persistence/InMemoryUserRepository.h"
 
 #include <nlohmann/json.hpp>
@@ -22,7 +23,8 @@ GameSession::Player blackPlayer()
 TEST_CASE("GameRequestHandler handles move for the requester's own piece and returns a fresh GameView snapshot")
 {
     InMemoryUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
+    LocalSessionIndexStore indexStore;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo, indexStore);
     manager.createSession(whitePlayer(), blackPlayer());
     GameRequestHandler handler(manager);
 
@@ -37,7 +39,8 @@ TEST_CASE("GameRequestHandler handles move for the requester's own piece and ret
 TEST_CASE("GameRequestHandler rejects a move for the opponent's piece")
 {
     InMemoryUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
+    LocalSessionIndexStore indexStore;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo, indexStore);
     manager.createSession(whitePlayer(), blackPlayer());
     GameRequestHandler handler(manager);
 
@@ -54,7 +57,8 @@ TEST_CASE("GameRequestHandler rejects a move for the opponent's piece")
 TEST_CASE("GameRequestHandler handles jump and returns a fresh GameView snapshot")
 {
     InMemoryUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
+    LocalSessionIndexStore indexStore;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo, indexStore);
     manager.createSession(whitePlayer(), blackPlayer());
     GameRequestHandler handler(manager);
 
@@ -67,7 +71,8 @@ TEST_CASE("GameRequestHandler handles jump and returns a fresh GameView snapshot
 TEST_CASE("GameRequestHandler returns an error when the connection has no active session")
 {
     InMemoryUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
+    LocalSessionIndexStore indexStore;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo, indexStore);
     GameRequestHandler handler(manager);
 
     nlohmann::json request{{"type", "jump"}, {"row", 6}, {"col", 4}};
@@ -80,7 +85,8 @@ TEST_CASE("GameRequestHandler returns an error when the connection has no active
 TEST_CASE("GameRequestHandler returns an error for an unknown message type")
 {
     InMemoryUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
+    LocalSessionIndexStore indexStore;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo, indexStore);
     GameRequestHandler handler(manager);
 
     nlohmann::json request{{"type", "not_a_real_type"}};
@@ -93,7 +99,8 @@ TEST_CASE("GameRequestHandler returns an error for an unknown message type")
 TEST_CASE("GameRequestHandler returns an error for malformed JSON")
 {
     InMemoryUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
+    LocalSessionIndexStore indexStore;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo, indexStore);
     GameRequestHandler handler(manager);
 
     nlohmann::json response = nlohmann::json::parse(handler.handle("conn1", "{ this is not valid json"));
@@ -105,7 +112,8 @@ TEST_CASE("GameRequestHandler returns an error for malformed JSON")
 TEST_CASE("GameRequestHandler returns an error when a required field is missing")
 {
     InMemoryUserRepository repo;
-    GameSessionManager manager([](const std::string&, const std::string&) {}, repo);
+    LocalSessionIndexStore indexStore;
+    GameSessionManager manager([](const std::string&, const std::string&) {}, repo, indexStore);
     manager.createSession(whitePlayer(), blackPlayer());
     GameRequestHandler handler(manager);
 

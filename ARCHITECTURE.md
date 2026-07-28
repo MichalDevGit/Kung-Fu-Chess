@@ -7,6 +7,43 @@ re-read of the sources unnecessary for most tasks. If you change the architectur
 way that makes a section below wrong, update that section in the same change.
 
 Last reviewed: 2026-07-28, against the source tree as of MIGRATION_PLAN.md's
+Phase 1b ("Connection/Matchmaker/session state → Redis-backable"), layered on
+top of Phase 1a ("users/ratings → PostgreSQL") described below. That change:
+`ConnectionRegistry`, `Matchmaker`, and `GameSessionManager`'s two lookup
+indexes each moved their raw storage behind a small interface, mirroring the
+`IUserRepository` pattern, while keeping every existing public method and
+call site (`AuthRequestHandler`/`MatchmakingRequestHandler`/
+`GameRequestHandler`/`server/main.cpp`) untouched — only how these three
+objects get constructed in `main.cpp` changed. Each business-logic class kept
+its own business logic and its own mutex (the "supersede a stale connection"
+dance in `ConnectionRegistry`, the score/queue-order pairing scan in
+`Matchmaker::tick`, the finished-session index cleanup in
+`GameSessionManager::removeFinishedSessions`); only the maps/vector
+underneath moved: `IConnectionStore` (`LocalConnectionStore`/
+`RedisConnectionStore`), `IMatchQueueStore` (`LocalMatchQueueStore`/
+`RedisMatchQueueStore`), `ISessionIndexStore` (`LocalSessionIndexStore`/
+`RedisSessionIndexStore`) — see "Server / persistence / networking layer"
+below for each interface's exact shape and why. `GameSessionManager`'s
+`sessions` map of live `GameSession` objects itself stays in-process only,
+unaffected — a `GameEngine` can't be externalized without a much bigger
+redesign reserved for a later phase; only the two *lookup indexes*
+(`connectionId`/`userId` -> `sessionId`) are Redis-backable here.
+Redis client: `hiredis` + `redis-plus-plus`, both `FetchContent`-vendored
+unconditionally in `server/CMakeLists.txt` (confirmed buildable from source
+under MSVC, unlike libpq — no `find_package`/optional-guard dance needed
+here) with one documented workaround: redis-plus-plus's own CMake hardcodes
+an *installed*-style `<include>/hiredis/hiredis.h` header layout when
+sniffing hiredis's version at configure time, which a bare FetchContent
+build tree doesn't have (hiredis's own build points consumers straight at
+its flat source dir) — `server/CMakeLists.txt` stages a copy of hiredis's
+public headers into that expected shape at configure time to bridge this;
+linking still goes through the real `hiredis::hiredis` target, unaffected.
+Like `KUNGFUCHESS_POSTGRES_URL`, `KUNGFUCHESS_REDIS_URL` is an explicit,
+unset-by-default opt-in (`server/src/main.cpp`) that switches all three
+stores to Redis at once, sharing one connection; local/in-memory storage
+remains the actual default until a staging run proves Redis out.
+
+Previously reviewed against the source tree as of MIGRATION_PLAN.md's
 Phase 1a ("users/ratings → PostgreSQL"), layered on top of Phase 0
 ("Groundwork") described below. That change: `server/src/persistence/
 PostgresDatabase` (owns a `pqxx::connection` + schema, mirroring `Database`'s
@@ -196,7 +233,17 @@ of scope (TLS, session persistence across a server restart, spectators, resign/d
   `libpqxx` (pinned `7.9.2`) — the one dependency in this project that isn't
   vendor-buildable from source under MSVC the way SQLiteCpp/bcrypt are (libpq's own build
   needs autoconf/make/bison/flex), so it's optional rather than required; see "Server /
-  persistence / networking layer" below for what's conditional on it.
+  persistence / networking layer" below for what's conditional on it. It also
+  unconditionally `FetchContent`s `hiredis` (pinned `v1.4.0`) and `redis-plus-plus`
+  (pinned `1.3.15`) — confirmed buildable from source under both MSVC and GCC (unlike
+  libpq), so no optional/`QUIET` treatment is needed the way libpqxx needs. redis-plus-plus's
+  own CMake calls `find_package(hiredis QUIET)` internally to locate hiredis;
+  `server/cmake/Findhiredis.cmake` (a hand-written Module-mode shim, prepended onto
+  `CMAKE_MODULE_PATH`) redirects that to the hiredis this project already fetched/built
+  itself — deliberately not `FetchContent`'s own `OVERRIDE_FIND_PACKAGE` for this, since
+  that needs CMake >= 3.24 and the Docker/Linux build's apt-installed cmake (Ubuntu
+  22.04) is only 3.22; Module-mode resolution has no such version floor. See the Phase
+  1b review note above for the header-layout workaround this shim also depends on.
 - Target graph, by directory (`->` means "links"):
   - `common/`: `KungFuChessCommon` (STATIC — DTOs/enums/EventBus/Config have real
     `.cpp` files, not just headers) `-> nlohmann_json`.
@@ -212,16 +259,20 @@ of scope (TLS, session persistence across a server restart, spectators, resign/d
     `KungFuChessAuth` (STATIC, `services/AuthService.cpp` only) `-> KungFuChessPersistence`;
     `KungFuChessGame` (STATIC, all of `src/game/` — model/rules/Engine/Controller/IO)
     `-> KungFuChessCommon`; `KungFuChessGameSession` (STATIC,
-    `services/GameSession.cpp`+`GameSessionManager.cpp` — kept separate from
+    `services/GameSession.cpp`+`GameSessionManager.cpp`+`services/LocalSessionIndexStore.cpp`+
+    `services/RedisSessionIndexStore.cpp` — kept separate from
     `KungFuChessAuth` on purpose, see below) `-> KungFuChessGame, KungFuChessProtocol,
-    KungFuChessPersistence` (the last one added for `IUserRepository`, which
-    `GameSessionManager` now takes directly to build every session's forfeit-score
-    callback — see "Server / persistence / networking layer" below);
+    KungFuChessPersistence, redis++_static` (`KungFuChessPersistence` added for
+    `IUserRepository`, which `GameSessionManager` now takes directly to build every
+    session's forfeit-score callback; `redis++_static` for `RedisSessionIndexStore` —
+    see "Server / persistence / networking layer" below);
     `KungFuChessNetwork` (STATIC, `handlers/`+`network/`+`services/ConnectionRegistry.cpp`+
-    `services/Matchmaker.cpp` — the latter two compiled here since neither depends on
-    `KungFuChessGame`/`KungFuChessGameSession` at all, and the handlers that need them
-    already live in this library)
-    `-> KungFuChessAuth, KungFuChessGameSession, KungFuChessProtocol, ixwebsocket`;
+    `services/Matchmaker.cpp`+`services/LocalConnectionStore.cpp`+
+    `services/RedisConnectionStore.cpp`+`services/LocalMatchQueueStore.cpp`+
+    `services/RedisMatchQueueStore.cpp` — the `ConnectionRegistry`/`Matchmaker` family
+    compiled here since none of it depends on `KungFuChessGame`/`KungFuChessGameSession`
+    at all, and the handlers that need them already live in this library)
+    `-> KungFuChessAuth, KungFuChessGameSession, KungFuChessProtocol, ixwebsocket, redis++_static`;
     `KungFuChessServer` executable `-> KungFuChessNetwork`;
     `KungFuChessPersistence_tests` (doctest; persistence + auth + game + game-session +
     matchmaker + common tests, all in one binary) `-> KungFuChessPersistence,
@@ -644,9 +695,20 @@ target and this is a vendored single-header third-party file, not project code).
   per-tick pushes, disconnect suppresses sends to that slot only, reconnect resumes
   them, `tickAll`, `rebindConnection`) and `game_request_handler_test.cpp`
   (connection-scoped `move`/`jump` dispatch including `no_active_game`/`not_your_piece`
-  errors) — both use a plain `InMemoryUserRepository` now, since `GameSessionManager`
-  requires an `IUserRepository&`; `matchmaker_test.cpp` (new — score-range pairing, earliest-queued-first
-  ordering, `MAX_WAIT_MILLIS` timeout, idempotent `enqueue`); `common_tests/` (
+  errors) — both use a plain `InMemoryUserRepository` and a `LocalSessionIndexStore` now,
+  since `GameSessionManager` requires an `IUserRepository&`/`ISessionIndexStore&`;
+  `matchmaker_test.cpp` (score-range pairing, earliest-queued-first ordering,
+  `MAX_WAIT_MILLIS` timeout, idempotent `enqueue` — now against a `LocalMatchQueueStore`);
+  `local_connection_store_test.cpp` (**new, Phase 1b** — `ConnectionRegistry` +
+  `LocalConnectionStore`'s supersede-on-reauth/supersede-safe-disconnect semantics; the
+  first dedicated test for this logic, which had none before); `redis_connection_store_test.cpp`/
+  `redis_match_queue_store_test.cpp`/`redis_session_index_store_test.cpp` (**new, Phase 1b**
+  — same contract coverage again, this time against a real reachable Redis,
+  `KUNGFUCHESS_TEST_REDIS_URL` defaulting to docker-compose's `redis` service; each
+  clears its own keys up front/after for isolation. Unlike the Postgres tests, these
+  aren't behind a compile-time macro at all — hiredis/redis-plus-plus are vendored
+  unconditionally, see "Build system" above — so they always compile and simply fail
+  with a connection error if no Redis is reachable when the suite runs); `common_tests/` (
   `EventBus`/`PieceStateToString`/`TimeProgress`); and `game_tests/` (mirrors
   `server/src/game/{model,rules,Engine,Controller,IO}`, same one-`TEST_CASE`-per-class/
   `SUBCASE`-per-scenario pattern, no mocking). All in one binary,
@@ -775,21 +837,44 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
   compares passwords itself. `registerUser` catches `DuplicateUsernameException` (not
   `SQLite::Exception` -- see `server/src/persistence/*` above) to detect a duplicate
   username, so this class has no SQLite-specific code or `#include` at all.
-- `server/src/services/ConnectionRegistry` — **new**. Mutex-guarded `connectionId ->
+- `server/src/services/ConnectionRegistry` — mutex-guarded `connectionId ->
   {userId, username, score}` (plus the reverse `userId -> connectionId`), populated
   only by `AuthRequestHandler` on a successful `login` (`register` never authenticates
   a connection). This is the identity binding every later request on that connection is
   checked against — nothing ever trusts a client-claimed user id. `onDisconnected`
-  clears both directions on a WebSocket close.
-- `server/src/services/Matchmaker` — **new**. A plain mutex-guarded vector of `{
-  connectionId, userId, username, score, enqueuedAtMs}` entries. `tick(nowMs, onMatched,
-  onTimedOut)` (called every server tick, see below) repeatedly pairs the
-  earliest-queued entry with the closest-score entry still queued within
-  `MatchmakingConfig::SCORE_RANGE` (removing both) — `Match::first` is always the
-  earlier-enqueued of the pair, which is exactly how "White = whoever entered first" is
-  guaranteed with no extra bookkeeping — then reports (and dequeues) anything that's
-  waited past `MatchmakingConfig::MAX_WAIT_MILLIS` via `onTimedOut`. No thread of its
-  own; driven off the same tick cadence as `GameSessionManager::tickAll`.
+  clears both directions on a WebSocket close. **Phase 1b**: `AuthenticatedUser` moved
+  to its own `AuthenticatedUser.h`; raw storage now lives behind `IConnectionStore&`
+  (`set`/`erase`/`find`/`setUserConnection`/`eraseUserConnection`/`findConnectionForUser`
+  — pure CRUD), injected at construction. `ConnectionRegistry` itself keeps its own
+  mutex and the "a reconnect supersedes the old connection" read-then-write logic
+  unchanged, just expressed in terms of the store's primitives instead of touching maps
+  directly — that mutex is what keeps those multi-step sequences atomic, which remains
+  sufficient as long as this stays one process (true cross-process atomicity, e.g. Lua
+  scripts or `WATCH`/`MULTI`, is out of scope until a later phase actually splits into
+  multiple processes sharing one Redis). `LocalConnectionStore` (today's actual default)
+  ports the original two `unordered_map`s verbatim; `RedisConnectionStore` is the
+  alternative (keys `conn:{connectionId}` -> JSON, `user_conn:{userId}` ->
+  connectionId), both behind `sw::redis::Redis&`.
+- `server/src/services/Matchmaker` — a queue of `{connectionId, userId, username, score,
+  enqueuedAtMs}` entries (the `Entry`/`Match` structs, hoisted to their own
+  `MatchmakingTypes.h` in Phase 1b — `Matchmaker::Entry`/`Matchmaker::Match` still work
+  everywhere via using-declarations). `tick(nowMs, onMatched, onTimedOut)` (called every
+  server tick, see below) takes a snapshot of the queue and repeatedly pairs the
+  earliest-queued entry with the closest-score entry still in it within
+  `MatchmakingConfig::SCORE_RANGE` — `Match::first` is always the earlier-enqueued of the
+  pair, which is exactly how "White = whoever entered first" is guaranteed with no extra
+  bookkeeping — then reports anything that's waited past `MatchmakingConfig::
+  MAX_WAIT_MILLIS` via `onTimedOut`, removing every matched/timed-out entry from the
+  store afterward. No thread of its own; driven off the same tick cadence as
+  `GameSessionManager::tickAll`. **Phase 1b**: queue storage moved behind
+  `IMatchQueueStore&` (`add`/`remove`/`contains`/`all`) — the pairing/timeout algorithm
+  itself is unchanged, now operating on the `all()` snapshot instead of a member
+  `vector` directly, so `Matchmaker` no longer needs its own mutex at all (a concurrent
+  `enqueue()` racing a `tick()`'s snapshot is a pre-existing-shape, benign race — that
+  entry just waits for the next tick). `LocalMatchQueueStore` ports the original
+  `vector<Entry>` + mutex verbatim (its own contains-then-push makes `add` idempotent);
+  `RedisMatchQueueStore` is the alternative (one Redis Hash `matchqueue`, field =
+  connectionId, value = JSON — `add` uses `HSETNX`, atomically idempotent for free).
 - `server/src/game/` — the domain simulation (unchanged by this round of work — see
   Module map / Core domain model / Rules system / Real-time mechanics above), plus one
   small addition: `Controller::pieceColorAt(Position) -> PieceColor` (`None` if empty/
@@ -835,8 +920,9 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
   - Every public method still locks its own `std::mutex`, for the same reason as before
     (tick-loop thread + request-handling thread both touch the same `GameEngine`).
 - `server/src/services/GameSessionManager` — owns every active `GameSession` keyed by
-  id, plus two reverse indexes (`connectionId -> sessionId`, `userId -> sessionId`) for
-  O(1) lookup, all behind its own mutex. `getOrCreateDefaultSession` is gone —
+  id (this map itself stays in-process only, unaffected by Phase 1b — see below), plus
+  two reverse indexes (`connectionId -> sessionId`, `userId -> sessionId`) for O(1)
+  lookup, all behind its own mutex. `getOrCreateDefaultSession` is gone —
   `createSession(whitePlayer, blackPlayer)` is the only way a session comes into being,
   called only from a `Matchmaker` match. `findSessionByConnection`/`findSessionByUserId`
   back `GameRequestHandler`'s dispatch and `AuthRequestHandler`'s reconnect check.
@@ -844,9 +930,21 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
   (which also drops that connection's index entry, so a stale route can never linger)
   wire reconnect/disconnect through to the right `GameSession`. `tickAll` now also
   removes any session `isFinished()` reports, along with its index entries. Constructed
-  with a `SendToFn` (shared by every session it creates) and an `IUserRepository&`, from
+  with a `SendToFn` (shared by every session it creates), an `IUserRepository&`, from
   which it builds one `RatingService` member (see below) that every session it creates
-  gets a `GameOutcomeFn` closing over.
+  gets a `GameOutcomeFn` closing over, and (**Phase 1b**) an `ISessionIndexStore&`
+  covering just the two lookup indexes above (`bindSession`/`bindConnection`/
+  `unbindConnection`/`unbindSession`/`findSessionIdByConnection`/`findSessionIdByUserId`)
+  — deliberately *not* the `sessions` map itself, since a live `GameEngine` can't be
+  externalized without a much bigger redesign reserved for a later phase.
+  `LocalSessionIndexStore` (today's actual default) ports the original two
+  `unordered_map`s verbatim, including `removeFinishedSessions`' linear "erase every
+  entry whose value equals this session" scan (now `unbindSession`). `RedisSessionIndexStore`
+  is the alternative (keys `session_conn:{connectionId}`/`session_user:{userId}` ->
+  sessionId) — it also maintains a private auxiliary Redis Set `session_keys:{sessionId}`
+  (the exact keys created for that session) purely so `unbindSession` can clean up via
+  `SMEMBERS`+`DEL` instead of a `SCAN`/`KEYS` over the whole keyspace; `LocalSessionIndexStore`
+  doesn't need this since an in-memory linear scan is already cheap.
 - `server/src/services/EloCalculator` — **new**. Pure, stateless ELO math (no DB, no
   networking, no locking): `applyResult(ratingWinner, ratingLoser) -> Outcome{
   newWinnerRating, newLoserRating}`, using the standard logistic expected-score curve
@@ -974,15 +1072,18 @@ both implemented now — see "Server / persistence / networking layer" above.)
 12. `common/DTO`'s converting-from-domain constructors must stay in their own
     separate `*FromDomain.cpp` files, not be merged back into each DTO's main `.cpp` —
     see "DTO layer" above for exactly why, and what silently breaks if this is ignored.
-13. **New, from the auth-gated matchmaking change**: matchmaking queue state, session
-    state, and the connection/user-id indexes in `ConnectionRegistry`/
-    `GameSessionManager` are all plain in-memory containers with no persistence — a
-    server restart silently drops every queued player and every in-progress game (only
-    SQLite-backed scores survive). This is an accepted, deliberate limitation for now
-    (see "Current state of integration"), not an oversight — the natural next step for
-    a real multi-node/cloud deployment is to make these two services swappable for a
-    shared store (Redis or similar) behind the same method signatures, since neither
-    touches networking types directly today.
+13. **Updated, from Phase 1b**: the seam described here now exists —
+    `ConnectionRegistry`/`Matchmaker`/`GameSessionManager`'s lookup indexes are each
+    swappable (`IConnectionStore`/`IMatchQueueStore`/`ISessionIndexStore`, Local by
+    default, Redis as the alternative — see "Server / persistence / networking layer"
+    above) — but **local/in-memory storage remains the actual default** everywhere
+    unless `KUNGFUCHESS_REDIS_URL` is set, so a server restart still silently drops
+    every queued player and every in-progress game by default (only SQLite/Postgres-backed
+    scores survive either way). `GameSessionManager`'s `sessions` map of live
+    `GameSession` objects was deliberately left out of this seam entirely — a
+    `GameEngine` can't be made Redis-backed without a much bigger redesign (serializing/
+    resuming live real-time engine state across a process), reserved for whichever later
+    phase actually needs it.
 14. **New**: a reconnect (`AuthRequestHandler`'s `login`-time check) racing the same
     session's forfeit-by-timeout (`GameSession::tick`, on the server's tick thread) is
     last-writer-wins, not arbitrated — an accepted edge case at this scale, flagged here
@@ -1035,6 +1136,8 @@ both implemented now — see "Server / persistence / networking layer" above.)
 | Change register/login business logic (not the DB rows) | `server/src/services/AuthService.cpp`; tests in `server/tests/auth_service_test.cpp` |
 | Change game-session hosting, tick behavior, or session lookup | `server/src/services/GameSession.cpp`/`GameSessionManager.cpp`; tests in `server/tests/game_session_test.cpp` |
 | Change matchmaking pairing rules, wait timeout, or score range | `common/Config/MatchmakingConfig.h`, `server/src/services/Matchmaker.cpp`; tests in `server/tests/matchmaker_test.cpp` |
+| Change connection-identity/matchmaking-queue/session-index storage, or add a new backend for one | `server/src/services/IConnectionStore.h`/`IMatchQueueStore.h`/`ISessionIndexStore.h` (implement the interface), their `Local*`/`Redis*` implementations; tests in `server/tests/local_connection_store_test.cpp`/`redis_connection_store_test.cpp`/`redis_match_queue_store_test.cpp`/`redis_session_index_store_test.cpp` |
+| Switch `ConnectionRegistry`/`Matchmaker`/`GameSessionManager` to Redis-backed storage | `server/src/main.cpp` (currently local/in-memory unless `KUNGFUCHESS_REDIS_URL` is set) |
 | Change disconnect-grace duration | `common/Config/MatchmakingConfig.h`, `server/src/services/GameSession.cpp` (`tick`, `forfeitTo`) |
 | Change ELO rating math (K-factor, starting rating) or how a game outcome is persisted | `common/Config/RatingConfig.h`, `server/src/services/EloCalculator.cpp` (math), `server/src/services/RatingService.cpp` (persistence); tests in `server/tests/elo_calculator_test.cpp`/`rating_service_test.cpp` |
 | Change reconnect detection/resume behavior | `server/src/handlers/AuthRequestHandler.cpp` (the `login` branch), `server/src/services/GameSessionManager.cpp` (`rebindConnection`), `server/src/services/GameSession.cpp` (`markReconnected`, `resumeInfoFor`) |

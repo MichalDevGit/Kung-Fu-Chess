@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 #include "GameSession.h"
+#include "ISessionIndexStore.h"
 #include "RatingService.h"
 
 class IUserRepository;
@@ -34,8 +35,12 @@ public:
     // connection ids). userRepository backs the RatingService every session's
     // GameOutcomeFn closes over, for ELO rating updates on either
     // game-ending path (see GameSession::forfeitTo and its GameOverEvent
-    // subscriber).
-    GameSessionManager(GameSession::SendToFn sendTo, IUserRepository& userRepository);
+    // subscriber). indexStore backs the connectionId/userId -> sessionId
+    // lookup indexes (LocalSessionIndexStore by default, RedisSessionIndexStore
+    // for a multi-node deployment -- see server/src/main.cpp's
+    // KUNGFUCHESS_REDIS_URL wiring); the `sessions` map of live GameSession
+    // objects itself stays in-process only, unaffected by this.
+    GameSessionManager(GameSession::SendToFn sendTo, IUserRepository& userRepository, ISessionIndexStore& indexStore);
 
     GameSession& createSession(GameSession::Player white, GameSession::Player black);
 
@@ -64,11 +69,10 @@ private:
     std::mutex mutex;
     GameSession::SendToFn sendTo;
     RatingService ratingService;
+    ISessionIndexStore& indexStore;
     long long nextSessionNumber = 1;
 
     std::unordered_map<std::string, std::unique_ptr<GameSession>> sessions;
-    std::unordered_map<std::string, std::string> sessionIdByConnection;
-    std::unordered_map<int, std::string> sessionIdByUserId;
 
     void removeFinishedSessions();
 };

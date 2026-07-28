@@ -1,8 +1,10 @@
-# Phase 0 (MIGRATION_PLAN.md): today's single server, containerized as-is,
-# plus placeholder Postgres/Redis containers the app doesn't talk to yet.
-# They exist now so the compose file itself, the network, and the volumes
-# are already in place before Phase 1 (externalizing state stores) needs
-# them -- nothing here changes what KungFuChessServer actually does.
+# Phase 0 (MIGRATION_PLAN.md) stood this up as today's single server plus
+# placeholder Postgres/Redis containers. Phase 1 (externalizing state
+# stores) has since wired both up for real: PostgresUserRepository and the
+# three Redis-backed lookup-index stores both exist and are reachable via
+# KUNGFUCHESS_POSTGRES_URL/KUNGFUCHESS_REDIS_URL on the `server` service --
+# but neither is set here, so SQLite + local/in-memory storage remain the
+# actual defaults until a staging run proves each backend out.
 services:
   server:
     build:
@@ -28,8 +30,12 @@ services:
     volumes:
       - kungfuchess-postgres:/var/lib/postgresql/data
 
-  # Unused by the app today -- reserved for Phase 1's Redis-backed
-  # ConnectionRegistry/Matchmaker/GameSessionManager index implementations.
+  # RedisConnectionStore/RedisMatchQueueStore/RedisSessionIndexStore
+  # (MIGRATION_PLAN.md Phase 1) exist now, but local/in-memory storage stays
+  # the server's actual default -- see server/src/main.cpp. Set
+  # KUNGFUCHESS_REDIS_URL on the `server` service (not done here by default)
+  # to opt this deployment's ConnectionRegistry/Matchmaker/GameSessionManager
+  # lookup indexes into Redis all at once, e.g. tcp://redis:6379.
   redis:
     image: redis:7-alpine
 

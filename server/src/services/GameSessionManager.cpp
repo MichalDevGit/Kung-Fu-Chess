@@ -4,9 +4,10 @@
 
 #include "../persistence/IUserRepository.h"
 
-GameSessionManager::GameSessionManager(GameSession::SendToFn sendTo, IUserRepository& userRepository)
+GameSessionManager::GameSessionManager(GameSession::SendToFn sendTo, IUserRepository& userRepository, ISessionIndexStore& indexStore)
     : sendTo(std::move(sendTo))
     , ratingService(userRepository)
+    , indexStore(indexStore)
 {
 }
 
@@ -31,10 +32,7 @@ GameSession& GameSessionManager::createSession(GameSession::Player white, GameSe
     GameSession& ref = *session;
     sessions.emplace(sessionId, std::move(session));
 
-    sessionIdByConnection[whiteConnectionId] = sessionId;
-    sessionIdByConnection[blackConnectionId] = sessionId;
-    sessionIdByUserId[whiteUserId] = sessionId;
-    sessionIdByUserId[blackUserId] = sessionId;
+    indexStore.bindSession(sessionId, {whiteConnectionId, blackConnectionId}, {whiteUserId, blackUserId});
 
     return ref;
 }
@@ -43,11 +41,11 @@ GameSession* GameSessionManager::findSessionByConnection(const std::string& conn
 {
     std::lock_guard<std::mutex> lock(mutex);
 
-    const auto it = sessionIdByConnection.find(connectionId);
-    if (it == sessionIdByConnection.end())
+    const std::optional<std::string> sessionId = indexStore.findSessionIdByConnection(connectionId);
+    if (!sessionId.has_value())
         return nullptr;
 
-    const auto sessionIt = sessions.find(it->second);
+    const auto sessionIt = sessions.find(*sessionId);
     return sessionIt != sessions.end() ? sessionIt->second.get() : nullptr;
 }
 
@@ -55,11 +53,11 @@ GameSession* GameSessionManager::findSessionByUserId(int userId)
 {
     std::lock_guard<std::mutex> lock(mutex);
 
-    const auto it = sessionIdByUserId.find(userId);
-    if (it == sessionIdByUserId.end())
+    const std::optional<std::string> sessionId = indexStore.findSessionIdByUserId(userId);
+    if (!sessionId.has_value())
         return nullptr;
 
-    const auto sessionIt = sessions.find(it->second);
+    const auto sessionIt = sessions.find(*sessionId);
     return sessionIt != sessions.end() ? sessionIt->second.get() : nullptr;
 }
 
@@ -67,16 +65,16 @@ bool GameSessionManager::rebindConnection(int userId, const std::string& newConn
 {
     std::lock_guard<std::mutex> lock(mutex);
 
-    const auto it = sessionIdByUserId.find(userId);
-    if (it == sessionIdByUserId.end())
+    const std::optional<std::string> sessionId = indexStore.findSessionIdByUserId(userId);
+    if (!sessionId.has_value())
         return false;
 
-    const auto sessionIt = sessions.find(it->second);
+    const auto sessionIt = sessions.find(*sessionId);
     if (sessionIt == sessions.end())
         return false;
 
     sessionIt->second->markReconnected(userId, newConnectionId);
-    sessionIdByConnection[newConnectionId] = it->second;
+    indexStore.bindConnection(newConnectionId, *sessionId);
     return true;
 }
 
@@ -84,18 +82,18 @@ void GameSessionManager::onConnectionClosed(const std::string& connectionId)
 {
     std::lock_guard<std::mutex> lock(mutex);
 
-    const auto it = sessionIdByConnection.find(connectionId);
-    if (it == sessionIdByConnection.end())
+    const std::optional<std::string> sessionId = indexStore.findSessionIdByConnection(connectionId);
+    if (!sessionId.has_value())
         return;
 
-    const auto sessionIt = sessions.find(it->second);
+    const auto sessionIt = sessions.find(*sessionId);
     if (sessionIt != sessions.end())
         sessionIt->second->markDisconnected(connectionId);
 
     // This exact connection is dead either way -- drop the route to it
     // regardless of whether the session lookup above succeeded, so a stale
     // entry can never linger past this call.
-    sessionIdByConnection.erase(it);
+    indexStore.unbindConnection(connectionId);
 }
 
 void GameSessionManager::tickAll(long long milliseconds)
@@ -119,14 +117,7 @@ void GameSessionManager::removeFinishedSessions()
             continue;
         }
 
-        const std::string& finishedId = it->first;
-
-        for (auto connIt = sessionIdByConnection.begin(); connIt != sessionIdByConnection.end();)
-            connIt = (connIt->second == finishedId) ? sessionIdByConnection.erase(connIt) : std::next(connIt);
-
-        for (auto userIt = sessionIdByUserId.begin(); userIt != sessionIdByUserId.end();)
-            userIt = (userIt->second == finishedId) ? sessionIdByUserId.erase(userIt) : std::next(userIt);
-
+        indexStore.unbindSession(it->first);
         it = sessions.erase(it);
     }
 }
