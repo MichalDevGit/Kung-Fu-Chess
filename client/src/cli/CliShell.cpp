@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "network/ApiGatewayClient.h"
 #include "network/WebSocketClient.h"
 #include "protocol/Message.h"
 #include "protocol/MessageType.h"
@@ -25,8 +26,9 @@ namespace
     constexpr std::chrono::seconds LOGIN_TIMEOUT{5};
 }
 
-CliShell::CliShell(WebSocketClient& client, std::mutex& outputMutex)
+CliShell::CliShell(WebSocketClient& client, ApiGatewayClient& apiGatewayClient, std::mutex& outputMutex)
     : client(client)
+    , apiGatewayClient(apiGatewayClient)
     , outputMutex(outputMutex)
 {
 }
@@ -83,22 +85,40 @@ CliShell::LoginOutcome CliShell::run()
                 continue;
             }
 
+            // register/login are now REST calls against the API Gateway
+            // (MIGRATION_PLAN.md Phase 2) -- register needs nothing further,
+            // it never touched this WebSocket connection even before.
             if (command == "register")
             {
-                client.send(protocol::RegisterRequest{username, password}.toJson());
+                const protocol::RegisterResult result = apiGatewayClient.registerUser(username, password);
+                std::lock_guard<std::mutex> lock(outputMutex);
+                if (result.success)
+                    std::cout << "registered as user id " << result.userId << "\n";
+                else
+                    std::cout << "register failed: " << result.error << "\n";
                 continue;
             }
 
-            // login -- block for the matching login_result (see onMessage)
-            // instead of firing and moving on, since the caller needs to
-            // know synchronously whether this succeeded before it can hand
-            // off to matchmaking.
+            const protocol::LoginResult gatewayResult = apiGatewayClient.login(username, password);
+            if (!gatewayResult.success)
+            {
+                std::lock_guard<std::mutex> lock(outputMutex);
+                std::cout << "login failed: " << gatewayResult.error << "\n";
+                continue;
+            }
+
+            // The REST call only proved the password was correct and handed
+            // back a token -- this connection's identity isn't bound until
+            // that token is presented over the WebSocket itself (see
+            // AuthRequestHandler's login_token branch), so block for the
+            // matching login_result exactly as the old password-based login
+            // used to (see onMessage).
             std::unique_lock<std::mutex> resultLock(resultMutex);
             pendingLoginResult.reset();
             pendingMatchFound.reset();
             resultLock.unlock();
 
-            client.send(protocol::LoginRequest{username, password}.toJson());
+            client.send(protocol::LoginWithTokenRequest{gatewayResult.token}.toJson());
 
             resultLock.lock();
             const bool arrived = resultCv.wait_for(resultLock, LOGIN_TIMEOUT, [this]

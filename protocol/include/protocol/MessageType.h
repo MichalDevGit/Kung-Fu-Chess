@@ -13,6 +13,14 @@ namespace protocol
         inline constexpr const char* LoginResult = "login_result";
         inline constexpr const char* Error = "error";
 
+        // Sent over the WebSocket connection after a client has already
+        // registered/logged in against the API Gateway's REST endpoints
+        // (MIGRATION_PLAN.md Phase 2) and received a signed token back --
+        // this is what actually binds connectionId -> user identity on this
+        // connection now. Replies with the same "login_result" type/shape as
+        // the (legacy, password-based) Login above.
+        inline constexpr const char* LoginWithToken = "login_token";
+
         // Game session / gameplay messages. There is no more join_game/
         // game_joined -- a session now only ever comes into being via
         // matchmaking (see MatchFound below), which already hands the

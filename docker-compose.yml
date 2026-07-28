@@ -1,26 +1,53 @@
 # Phase 0 (MIGRATION_PLAN.md) stood this up as today's single server plus
 # placeholder Postgres/Redis containers. Phase 1 (externalizing state
-# stores) has since wired both up for real: PostgresUserRepository and the
-# three Redis-backed lookup-index stores both exist and are reachable via
-# KUNGFUCHESS_POSTGRES_URL/KUNGFUCHESS_REDIS_URL on the `server` service --
-# but neither is set here, so SQLite + local/in-memory storage remain the
-# actual defaults until a staging run proves each backend out.
+# stores) wired both up for real: PostgresUserRepository and the three
+# Redis-backed lookup-index stores both exist and are reachable via
+# KUNGFUCHESS_POSTGRES_URL/KUNGFUCHESS_REDIS_URL.
+#
+# Phase 2 (splitting off the API Gateway) is the point where Postgres stops
+# being merely "reachable but unused": `server` and `apigateway` below are
+# now two separate containers that both read/write the `users` table, so
+# KUNGFUCHESS_POSTGRES_URL is set on BOTH here, pointing at the same
+# `postgres` service -- leaving either one on its own default SQLite file
+# would let the two processes silently diverge on who's registered (see
+# ARCHITECTURE.md's Known gaps). Both also share the same
+# KUNGFUCHESS_TOKEN_SECRET, since apigateway issues login tokens and server
+# only verifies them -- they must agree on the signing secret.
+x-kungfuchess-shared-env: &kungfuchess-shared-env
+  KUNGFUCHESS_POSTGRES_URL: postgresql://kungfuchess:kungfuchess@postgres:5432/kungfuchess
+  KUNGFUCHESS_TOKEN_SECRET: change-me-to-a-real-secret-before-any-real-deployment
+
 services:
   server:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime-server
+    environment:
+      <<: *kungfuchess-shared-env
     ports:
       - "9002:9002" # game WebSocket
       - "9003:9003" # health check (GET /health)
     volumes:
       - kungfuchess-data:/app/data
+    depends_on:
+      - postgres
 
-  # PostgresUserRepository (MIGRATION_PLAN.md Phase 1) exists now, but SQLite
-  # stays the server's actual default -- see server/src/main.cpp. Set
-  # KUNGFUCHESS_POSTGRES_URL on the `server` service (not done here by
-  # default) to opt this deployment into Postgres, e.g.
-  # postgresql://kungfuchess:kungfuchess@postgres:5432/kungfuchess.
+  # MIGRATION_PLAN.md Phase 2: register/login as their own deployable HTTP
+  # service, reusing the same Postgres-backed user store as `server` (see
+  # the shared env anchor above) -- see ARCHITECTURE.md for the full design.
+  apigateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-apigateway
+    environment:
+      <<: *kungfuchess-shared-env
+    ports:
+      - "9004:9004" # register/login REST API
+    depends_on:
+      - postgres
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -35,7 +62,9 @@ services:
   # the server's actual default -- see server/src/main.cpp. Set
   # KUNGFUCHESS_REDIS_URL on the `server` service (not done here by default)
   # to opt this deployment's ConnectionRegistry/Matchmaker/GameSessionManager
-  # lookup indexes into Redis all at once, e.g. tcp://redis:6379.
+  # lookup indexes into Redis all at once, e.g. tcp://redis:6379. Still a
+  # single Game Node (Phase 3+ territory), so this remains a placeholder
+  # from `server`'s point of view either way.
   redis:
     image: redis:7-alpine
 

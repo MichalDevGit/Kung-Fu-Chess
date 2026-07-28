@@ -14,6 +14,14 @@ namespace NetworkConfig
     // healthcheck, Kubernetes probe) check "is this process up" without
     // speaking the WebSocket/JSON protocol at all.
     constexpr int HEALTH_CHECK_PORT = 9003;
+
+    // Plain HTTP REST API (apigateway/src/network/ApiGatewayServer) --
+    // register/login now live here instead of on the WebSocket process (see
+    // MIGRATION_PLAN.md Phase 2). A separate port/host from DEFAULT_PORT
+    // since it's a genuinely separate deployable service, not just a
+    // different message type on the same connection.
+    constexpr const char* API_GATEWAY_HOST = "127.0.0.1";
+    constexpr int API_GATEWAY_PORT = 9004;
 }
 
 #endif

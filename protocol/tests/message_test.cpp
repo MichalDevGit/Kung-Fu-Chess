@@ -32,6 +32,45 @@ TEST_CASE("JumpRequest round-trips through JSON")
     CHECK(parsed.col == 7);
 }
 
+TEST_CASE("LoginWithTokenRequest round-trips through JSON")
+{
+    LoginWithTokenRequest request{"header.signature"};
+
+    nlohmann::json j = nlohmann::json::parse(request.toJson());
+
+    CHECK(readType(j) == MessageType::LoginWithToken);
+
+    LoginWithTokenRequest parsed = LoginWithTokenRequest::fromJson(j);
+    CHECK(parsed.token == "header.signature");
+}
+
+TEST_CASE("LoginResult round-trips its optional token field")
+{
+    SUBCASE("a successful login carrying a token (API Gateway shape)")
+    {
+        LoginResult result{true, 7, 1200, "", "header.signature"};
+
+        nlohmann::json j = nlohmann::json::parse(result.toJson());
+        LoginResult parsed = LoginResult::fromJson(j);
+
+        CHECK(parsed.success);
+        CHECK(parsed.userId == 7);
+        CHECK(parsed.score == 1200);
+        CHECK(parsed.token == "header.signature");
+    }
+
+    SUBCASE("a successful login with no token (WebSocket process's own reply)")
+    {
+        LoginResult result{true, 7, 1200, "", ""};
+
+        nlohmann::json j = nlohmann::json::parse(result.toJson());
+        CHECK_FALSE(j.contains("token"));
+
+        LoginResult parsed = LoginResult::fromJson(j);
+        CHECK(parsed.token.empty());
+    }
+}
+
 TEST_CASE("GameStartedMessage round-trips through JSON")
 {
     GameStartedMessage message;

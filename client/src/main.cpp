@@ -15,6 +15,7 @@
 #include <nlohmann/json.hpp>
 
 #include "cli/CliShell.h"
+#include "network/ApiGatewayClient.h"
 #include "network/WebSocketClient.h"
 #include "game/GameClient.h"
 #include "ui/BoardCanvas.h"
@@ -142,7 +143,11 @@ int main()
         }
         std::cout << "Connected.\n";
 
-        CliShell shell(client, outputMutex);
+        const std::string apiGatewayUrl =
+            std::string("http://") + NetworkConfig::API_GATEWAY_HOST + ":" + std::to_string(NetworkConfig::API_GATEWAY_PORT);
+        ApiGatewayClient apiGatewayClient(apiGatewayUrl);
+
+        CliShell shell(client, apiGatewayClient, outputMutex);
         const CliShell::LoginOutcome outcome = shell.run();
 
         if (!outcome.loggedIn)

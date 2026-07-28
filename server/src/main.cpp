@@ -1,11 +1,13 @@
 // KungFuChess server entry point: opens the SQLite-backed user database,
-// wires it through AuthService/AuthRequestHandler for auth requests,
-// ConnectionRegistry/Matchmaker/MatchmakingRequestHandler for pairing
-// authenticated connections into matches, and GameSessionManager/
-// GameRequestHandler for game commands, all dispatched from one WebSocket
-// handler; also runs the server-owned tick loop that advances every active
-// GameSession's real-time clock and scans the matchmaking queue,
-// independent of whether any client happens to be connected right now.
+// wires it through AuthRequestHandler (login_token verification only --
+// register/password login now live in the separate apigateway/ process, see
+// MIGRATION_PLAN.md Phase 2), ConnectionRegistry/Matchmaker/
+// MatchmakingRequestHandler for pairing authenticated connections into
+// matches, and GameSessionManager/GameRequestHandler for game commands, all
+// dispatched from one WebSocket handler; also runs the server-owned tick
+// loop that advances every active GameSession's real-time clock and scans
+// the matchmaking queue, independent of whether any client happens to be
+// connected right now.
 #include <chrono>
 #include <cstdlib>
 #include <memory>
@@ -22,7 +24,6 @@
 #include "network/WebSocketServer.h"
 #include "persistence/IUserRepository.h"
 #include "persistence/RepositoryFactory.h"
-#include "services/AuthService.h"
 #include "services/ConnectionRegistry.h"
 #include "services/GameSessionManager.h"
 #include "services/IConnectionStore.h"
@@ -39,8 +40,10 @@
 #include "protocol/MessageType.h"
 #include "common/Config/NetworkConfig.h"
 #include "common/Config/TimingConfig.h"
+#include "common/Config/TokenConfig.h"
 #include "common/Logging/Logger.h"
 #include "common/MonotonicClock.h"
+#include "common/Security/TokenService.h"
 #include "common/enums/PieceColor.h"
 
 namespace
@@ -133,7 +136,15 @@ int main()
     std::unique_ptr<IUserRepository> users = postgresUrl
         ? RepositoryFactory::createUserRepository(RepositoryBackend::Postgres, "", postgresUrl)
         : RepositoryFactory::createUserRepository(RepositoryBackend::Sqlite, dbPath);
-    AuthService authService(*users);
+
+    // Must match the API Gateway process's own KUNGFUCHESS_TOKEN_SECRET
+    // (or dev-default fallback) -- see ARCHITECTURE.md's Known gaps and
+    // MIGRATION_PLAN.md Phase 2. This process only ever verifies a token
+    // (login_token); it never issues one.
+    const char* tokenSecretEnv = std::getenv("KUNGFUCHESS_TOKEN_SECRET");
+    const std::string tokenSecret =
+        tokenSecretEnv ? std::string(tokenSecretEnv) : TokenConfig::DEV_INSECURE_DEFAULT_SECRET;
+    security::TokenService tokenService(tokenSecret);
 
     // KUNGFUCHESS_REDIS_URL is an explicit opt-in only (unset everywhere
     // today) -- local/in-memory storage remains the actual default per
@@ -179,7 +190,8 @@ int main()
     // existing session on login -- see the class comment) and a way to push
     // that resume independent of login's own synchronous reply.
     AuthRequestHandler authHandler(
-        authService,
+        *users,
+        tokenService,
         connectionRegistry,
         sessionManager,
         [&server](const std::string& connectionId, const std::string& json)

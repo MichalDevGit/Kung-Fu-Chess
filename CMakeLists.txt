@@ -46,6 +46,13 @@ add_subdirectory(protocol)
 # ---- Server (persistence + game engine + WebSocket networking layer) ----
 add_subdirectory(server)
 
+# ---- API Gateway (MIGRATION_PLAN.md Phase 2: register/login as their own
+# deployable HTTP service, reusing server/'s AuthService) ----
+# Must come after server/ -- links KungFuChessAuth, which server/'s
+# CMakeLists.txt defines. No OpenCV dependency, so (unlike client/) this
+# builds unconditionally, including in the server-only Docker/Linux build.
+add_subdirectory(apigateway)
+
 # ---- CLI client (standalone executable, talks to the server over ws://) ----
 # Off by default when building only the server (e.g. the Docker image, or any
 # Linux build): client/ links the vendored OpenCV binaries under lib/, which

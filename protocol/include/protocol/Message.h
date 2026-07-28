@@ -49,6 +49,26 @@ namespace protocol
         }
     };
 
+    // Sent over the WebSocket connection once the client already holds a
+    // signed token from the API Gateway's REST /login (MIGRATION_PLAN.md
+    // Phase 2) -- carries no password, since the WebSocket process never
+    // verifies one directly anymore.
+    struct LoginWithTokenRequest
+    {
+        std::string token;
+
+        std::string toJson() const
+        {
+            nlohmann::json j{{"type", MessageType::LoginWithToken}, {"token", token}};
+            return j.dump();
+        }
+
+        static LoginWithTokenRequest fromJson(const nlohmann::json& j)
+        {
+            return LoginWithTokenRequest{j.at("token").get<std::string>()};
+        }
+    };
+
     struct RegisterResult
     {
         bool success = false;
@@ -81,6 +101,12 @@ namespace protocol
         int userId = 0;
         int score = 0;
         std::string error;
+        // Only ever populated by the API Gateway's REST /login (see
+        // MIGRATION_PLAN.md Phase 2) -- empty for the WebSocket process's
+        // own login_result reply (it never issues tokens, only verifies
+        // them). Kept on this same struct rather than a new one since the
+        // gateway reuses LoginResult verbatim for its REST response body.
+        std::string token;
 
         std::string toJson() const
         {
@@ -89,6 +115,8 @@ namespace protocol
             {
                 j["userId"] = userId;
                 j["score"] = score;
+                if (!token.empty())
+                    j["token"] = token;
             }
             else
             {
@@ -104,6 +132,7 @@ namespace protocol
             result.userId = j.value("userId", 0);
             result.score = j.value("score", 0);
             result.error = j.value("error", std::string());
+            result.token = j.value("token", std::string());
             return result;
         }
     };

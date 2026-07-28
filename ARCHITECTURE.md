@@ -7,6 +7,60 @@ re-read of the sources unnecessary for most tasks. If you change the architectur
 way that makes a section below wrong, update that section in the same change.
 
 Last reviewed: 2026-07-28, against the source tree as of MIGRATION_PLAN.md's
+Phase 2 ("Split off the API Gateway (auth/REST)"), layered on top of Phase 1b
+described below. That change, in two steps (both landed): **step A**
+(dual-accept) added a new top-level `apigateway/` module — mirroring
+`common/`/`protocol/`/`server/`/`client/` as its own `add_subdirectory` —
+whose one executable, `KungFuChessApiGateway`, owns `register`/`login` over
+plain HTTP (`apigateway/src/network/ApiGatewayServer`, a small
+`ix::HttpServer` wrapper mirroring `HealthCheckServer`'s pImpl shape) by
+reusing `AuthService`/`RepositoryFactory` verbatim from `server/`
+(`apigateway/` links `KungFuChessAuth` directly; no auth logic is
+duplicated). A successful REST `/login` now also issues a signed token via
+new `common/Security/TokenService` (`common/Security/Sha256.h`/`.cpp` — a
+small vendored, dependency-free HMAC-SHA256 implementation, same
+vendor-rather-than-FetchContent spirit as `bcrypt_vendor`; deliberately not
+a real JWT, just `base64url(payload).base64url(hmac)`, since nothing outside
+this codebase ever needs to consume one). `server/`'s `AuthRequestHandler`
+gained a new `login_token` branch (protocol: `MessageType::LoginWithToken`/
+`LoginWithTokenRequest` in `protocol/Message.h`) that verifies this token via
+`TokenService` and looks the user up by id via `IUserRepository::findById`
+for username/score — no password touched — while, in this step, still also
+keeping its original password-based `register`/`login` branches for a
+transitional dual-accept window. **Step B** (landed in the same pass here,
+though MIGRATION_PLAN.md frames it as "one release later") then deleted
+those password branches and `AuthRequestHandler`'s `AuthService&` dependency
+entirely, replacing it with `IUserRepository&` — the concrete, link-graph-
+visible proof of "the WebSocket process no longer touches passwords
+directly": `server/CMakeLists.txt`'s `KungFuChessNetwork` no longer links
+`KungFuChessAuth` at all (linked directly instead: `KungFuChessPersistence`,
+which it needed anyway for `IUserRepository`), so `KungFuChessServer` no
+longer pulls in `KungFuChessAuth`/`KungFuChessSecurity`/`bcrypt_vendor` at
+link time — verified by inspecting the actual build output, not just by
+reading the CMake file. `protocol::LoginResult` gained one new optional
+field, `token` (empty unless the API Gateway's REST `/login` populated it);
+`protocol::RegisterRequest`/`RegisterResult`/`LoginRequest`/`LoginResult`
+themselves are unchanged in shape and are now reused as-is for the
+gateway's REST request/response *bodies*, not just WebSocket envelopes.
+Client-side: new `client/src/network/ApiGatewayClient` (wraps
+`ix::HttpClient`, the one file that does) replaces `CliShell`'s old
+WS-message-based `register`/`login`, both now synchronous REST calls; a
+successful `login` then sends `LoginWithTokenRequest{token}` over the
+existing `WebSocketClient` connection and blocks for `login_result` exactly
+as before (that part still genuinely belongs on the socket — it's what
+binds connection identity and triggers a reconnect-resume check). A load-
+bearing operational consequence, not a code one: `KungFuChessApiGateway`
+(writes users) and `KungFuChessServer` (reads them by id) are now separate
+processes that **must** agree on one user store — `docker-compose.yml` sets
+`KUNGFUCHESS_POSTGRES_URL` on both services now (previously unset/optional),
+which is the point Postgres stops being merely "reachable" and becomes
+actually required for correctness; both also share one
+`KUNGFUCHESS_TOKEN_SECRET`. See "Known gaps" below for what's still rough
+about the token secret's default. `Dockerfile` gained a second named runtime
+stage (`runtime-apigateway`, alongside the renamed `runtime-server`) sharing
+one build stage that now also builds `KungFuChessApiGateway`.
+
+Previously reviewed against the source tree as of MIGRATION_PLAN.md's
 Phase 1b ("Connection/Matchmaker/session state → Redis-backable"), layered on
 top of Phase 1a ("users/ratings → PostgreSQL") described below. That change:
 `ConnectionRegistry`, `Matchmaker`, and `GameSessionManager`'s two lookup
@@ -272,12 +326,31 @@ of scope (TLS, session persistence across a server restart, spectators, resign/d
     `services/RedisMatchQueueStore.cpp` — the `ConnectionRegistry`/`Matchmaker` family
     compiled here since none of it depends on `KungFuChessGame`/`KungFuChessGameSession`
     at all, and the handlers that need them already live in this library)
-    `-> KungFuChessAuth, KungFuChessGameSession, KungFuChessProtocol, ixwebsocket, redis++_static`;
-    `KungFuChessServer` executable `-> KungFuChessNetwork`;
+    `-> KungFuChessPersistence, KungFuChessGameSession, KungFuChessProtocol, ixwebsocket, redis++_static`
+    — **as of Phase 2 step B, deliberately does NOT link `KungFuChessAuth`** (only
+    `AuthRequestHandler`'s now-removed password branches ever needed it; it now
+    depends on `KungFuChessPersistence` directly instead, for `IUserRepository`,
+    which it needed anyway); `KungFuChessServer` executable `-> KungFuChessNetwork`
+    (so, transitively, `KungFuChessAuth`/`KungFuChessSecurity`/`bcrypt_vendor` are
+    **not** linked into this executable at all anymore — see "Server / persistence /
+    networking layer" below);
     `KungFuChessPersistence_tests` (doctest; persistence + auth + game + game-session +
     matchmaker + common tests, all in one binary) `-> KungFuChessPersistence,
-    KungFuChessAuth, KungFuChessGame, KungFuChessGameSession, KungFuChessNetwork`.
-  - `client/`: `KungFuChessClientNetwork` (STATIC, `network/WebSocketClient`)
+    KungFuChessAuth, KungFuChessGame, KungFuChessGameSession, KungFuChessNetwork`
+    (this test binary still links `KungFuChessAuth` directly, since `auth_service_test.cpp`
+    still exercises it — only the production `KungFuChessServer` executable dropped it).
+  - `apigateway/` (**new, Phase 2**): `KungFuChessApiGatewayLib` (STATIC,
+    `ApiGatewayRequestHandler.cpp`+`network/ApiGatewayServer.cpp`)
+    `-> KungFuChessAuth, KungFuChessCommon, KungFuChessProtocol, ixwebsocket` — the one
+    place `AuthService`/`PasswordHasher`/bcrypt are exercised at runtime outside tests;
+    `KungFuChessApiGateway` executable (`src/main.cpp`) `-> KungFuChessApiGatewayLib`;
+    `KungFuChessApiGateway_tests` (doctest) `-> KungFuChessApiGatewayLib, KungFuChessPersistence`
+    (for `InMemoryUserRepository`). Added to the root `CMakeLists.txt` right after
+    `server/` (needs `KungFuChessAuth`, defined there), unconditionally (no
+    `BUILD_CLIENT`-style guard — no OpenCV dependency).
+  - `client/`: `KungFuChessClientNetwork` (STATIC, `network/WebSocketClient` +
+    `network/ApiGatewayClient` — **new, Phase 2**, wraps `ix::HttpClient` for the
+    REST `register`/`login` calls, the one file that does)
     `-> KungFuChessProtocol, ixwebsocket`; `KungFuChessCli` (STATIC, `cli/CliShell.cpp` —
     a library now, not its own executable, since `main.cpp` needs it plus the UI/game
     libraries below in one process) `-> KungFuChessClientNetwork, KungFuChessProtocol`;
@@ -309,6 +382,15 @@ common/                <-- no dependency on server/ or client/
   MonotonicClock.h         nowMillis() -- wall-clock ms (steady_clock), used only for
                            matchmaking queue timestamps and disconnect-grace timing, never
                            for the game engine's own manually-advanced logical clock
+  WallClock.h              wallClockMillis() -- REAL (system_clock/Unix-epoch) ms, a
+                           deliberately different clock source from MonotonicClock.h's
+                           nowMillis(): steady_clock's epoch is only meaningful within
+                           one process, but TokenService issues a token in one process
+                           (apigateway/) and verifies it in another (server/), so it
+                           needs a clock both agree on -- see Security/ below
+  Security/                TokenService (issue/verify a signed login token) + Sha256
+                           (vendored, dependency-free HMAC-SHA256) -- new in Phase 2,
+                           shared by server/ (verifies) and apigateway/ (issues)
         ^
 protocol/               <-- depends on common/ (wraps common::GameView directly)
   MessageType.h            wire "type" string constants
@@ -320,10 +402,18 @@ server/src/game/*       <-- the authoritative domain simulation, depends only on
 server: GameSession, GameSessionManager   <-- depends on game/ + protocol/ + persistence/
         ^ (IUserRepository, for forfeit score deltas)
 server: ConnectionRegistry, Matchmaker, AuthRequestHandler, MatchmakingRequestHandler,
-        GameRequestHandler   <-- depends on the above + auth/ + persistence/
+        GameRequestHandler   <-- depends on the above + persistence/ + common/Security
+        (Phase 2 step B: AuthRequestHandler no longer depends on server/src/services/
+        AuthService at all -- see "Server / persistence / networking layer" below)
         ^
 server/src/network (WebSocketServer)   <-- per-connection-id request/response + targeted
                                             push transport, unaware of game/ at all
+
+apigateway/src/*        <-- depends on server/src/services/AuthService (reused directly,
+  (new, Phase 2)             not duplicated) + common/Security/TokenService + protocol/
+  ApiGatewayRequestHandler   REST body <-> AuthService/TokenService translation, testable
+                             without a real HTTP server (mirrors AuthRequestHandler's split)
+  network/ApiGatewayServer  thin ix::HttpServer wrapper (mirrors HealthCheckServer)
 
 client/src/ui/*         <-- depends only on common/DTO + common/enums + client/src/game/PixelPosition
   Img, BoardCanvas, SpriteManager, AnimationFrame, Renderer, GameLoop
@@ -333,9 +423,12 @@ client/src/game/*       <-- BoardMapper (pixel math) + PixelPosition ({int x, y}
                             depends on common/ + protocol/
         ^
 client/src/cli/CliShell <-- the auth-phase message handler (register/login/help/quit);
-                            depends on protocol/ + client/src/network only
+                            depends on protocol/ + client/src/network only. Phase 2:
+                            register/login are REST calls via ApiGatewayClient; a
+                            successful login then sends the token over WebSocketClient
         ^
-client/src/network (WebSocketClient)   <-- request/response transport, unaware of game/ at all
+client/src/network (WebSocketClient, ApiGatewayClient)   <-- request/response transport,
+                            unaware of game/ at all (ApiGatewayClient is new, Phase 2)
 ```
 
 `common/` is the *only* thing `server/` and `client/` share as compiled code — and even
@@ -626,18 +719,25 @@ constructor `cellSize` argument, `SpriteManager`'s `spriteSize` argument, and
 
 ## Current state of integration
 
-There is exactly one way to play now, and it requires two different logged-in users:
-start `KungFuChessServer`, then run `KungFuChessClient` once per player (two separate
-terminals/machines). Each process: connects a `WebSocketClient`; runs `CliShell` for
-`register`/`login` (blocking on the matching `login_result`, see `CliShell::run`); on a
-successful login, either resumes an existing session (a reconnect — see below) or sends
+There is exactly one way to play now, and it requires two different logged-in users and
+**three server-side processes** (**Phase 2**: `KungFuChessApiGateway` is new):
+start `KungFuChessApiGateway` (REST, port 9004) and `KungFuChessServer` (WebSocket, port
+9002) — both pointed at the same user store, see the top-of-file Phase 2 review note and
+"Known gaps" below — then run `KungFuChessClient` once per player (two separate
+terminals/machines). Each client process: connects a `WebSocketClient`; runs `CliShell`
+for `register`/`login`, which now call `ApiGatewayClient`'s REST endpoints (synchronous
+HTTP, no WebSocket involved for `register` at all); on a successful REST `login`, sends
+the returned token over the WebSocket as `LoginWithTokenRequest` and blocks on the
+matching `login_result` (see `CliShell::run`); on a successful `login_result`, either
+resumes an existing session (a reconnect — see below) or sends
 `FindGameRequest` and blocks for `MatchFoundResult`/`NoMatchResult` (`waitForMatch` in
 `client/src/main.cpp`, auto-retrying on a no-match after the user confirms); and once
 matched, constructs `GameClient` (seeded with the match's initial `GameView`) and builds
 `BoardCanvas`/`SpriteManager`/`AnimationFrame`/`Renderer`/`GameLoop` exactly as the old
-`gui_main.cpp` did — all four phases run in **one process, over one `WebSocketClient`
-connection**, which is what lets the server treat "connection id" as "identity" for the
-whole session (see below). There is no more separate GUI-only executable to run instead.
+`gui_main.cpp` did — all client-side phases still run in **one process, over one
+`WebSocketClient` connection** (plus the one-off REST calls), which is what lets the
+server treat "connection id" as "identity" for the whole session (see below). There is
+no more separate GUI-only executable to run instead.
 
 Real per-connection server push exists now: `server/src/network/WebSocketServer` tracks
 every open connection by id and exposes both `broadcast(json)` (all connections) and
@@ -697,6 +797,10 @@ target and this is a vendored single-header third-party file, not project code).
   (connection-scoped `move`/`jump` dispatch including `no_active_game`/`not_your_piece`
   errors) — both use a plain `InMemoryUserRepository` and a `LocalSessionIndexStore` now,
   since `GameSessionManager` requires an `IUserRepository&`/`ISessionIndexStore&`;
+  `auth_request_handler_test.cpp` (**new, Phase 2** — `login_token` success/
+  invalid-signature/expired/unknown-user against a real `TokenService` +
+  `InMemoryUserRepository`, plus one test asserting `register`/`login` are no longer
+  recognized message types at all, now that step B deleted those branches);
   `matchmaker_test.cpp` (score-range pairing, earliest-queued-first ordering,
   `MAX_WAIT_MILLIS` timeout, idempotent `enqueue` — now against a `LocalMatchQueueStore`);
   `local_connection_store_test.cpp` (**new, Phase 1b** — `ConnectionRegistry` +
@@ -709,14 +813,23 @@ target and this is a vendored single-header third-party file, not project code).
   aren't behind a compile-time macro at all — hiredis/redis-plus-plus are vendored
   unconditionally, see "Build system" above — so they always compile and simply fail
   with a connection error if no Redis is reachable when the suite runs); `common_tests/` (
-  `EventBus`/`PieceStateToString`/`TimeProgress`); and `game_tests/` (mirrors
+  `EventBus`/`PieceStateToString`/`TimeProgress`/`TokenService` — the last one **new,
+  Phase 2**: issue→verify round trip, expired/tampered/wrong-secret rejection); and
+  `game_tests/` (mirrors
   `server/src/game/{model,rules,Engine,Controller,IO}`, same one-`TEST_CASE`-per-class/
   `SUBCASE`-per-scenario pattern, no mocking). All in one binary,
   `KungFuChessPersistence_tests` (name kept from before the split rather than renamed,
   since it now covers considerably more than persistence).
-- `protocol/tests/` (new) — round-trip `toJson()`→`fromJson()` coverage for every message
-  struct, including `find_game`/`match_found`/`no_match` and a full `GameViewMessage`
+- `protocol/tests/` — round-trip `toJson()`→`fromJson()` coverage for every message
+  struct, including `find_game`/`match_found`/`no_match`, `login_token`/`LoginResult`'s
+  optional `token` field (**new, Phase 2**), and a full `GameViewMessage`
   round-trip through a real `BoardView`/`MotionView`/`JumpView`/`RestView` snapshot.
+- `apigateway/tests/` (**new, Phase 2**) — `api_gateway_request_handler_test.cpp`:
+  `ApiGatewayRequestHandler`'s `handleRegister`/`handleLogin` against a real
+  `AuthService`/`InMemoryUserRepository`/`TokenService`, no real HTTP server or
+  database — register success/duplicate, login issues a token that
+  `TokenService::verify`s back to the same userId, wrong password issues no token,
+  malformed JSON never throws.
 - `client/tests/` (new) — `board_mapper_test.cpp` (updated for `BoardMapper`'s
   `PositionView` return type) and `game_client_test.cpp` (construction from a given
   initial `GameView`/default-state/no-crash-without-a-live-connection coverage only —
@@ -742,19 +855,32 @@ runs all three phases (auth, matchmaking, game) over one connection.
 ### `protocol/` — shared JSON message contract
 
 Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`),
-`server/`, and `client/`, so no one duplicates the wire format.
+`server/`, `client/`, and (**new, Phase 2**) `apigateway/`, so no one duplicates the
+wire format — including the REST bodies below, which reuse these same structs rather
+than inventing new ones.
 
 - `MessageType.h` — the JSON envelope's `"type"` string constants: `register`,
   `login`, `register_result`, `login_result`, `error`, `move`, `jump`, `game_view`,
-  `game_started`, `game_over`, and (new) `find_game`, `searching`, `match_found`,
-  `no_match`, `opponent_disconnected`, `opponent_reconnected`. `join_game`/`game_joined`
+  `game_started`, `game_over`, `find_game`, `searching`, `match_found`,
+  `no_match`, `opponent_disconnected`, `opponent_reconnected`, and (**new, Phase 2**)
+  `login_token`. `join_game`/`game_joined`
   are gone — a session now only ever comes into being via a match (or a reconnect
   resume), both of which already hand the client a `match_found`-shaped payload
-  carrying the initial `GameView`.
+  carrying the initial `GameView`. `register`/`login` themselves are no longer sent
+  over the WebSocket connection at all (`server/`'s `AuthRequestHandler` doesn't
+  recognize them anymore) — they're kept only because `apigateway/`'s REST endpoints
+  reuse `RegisterRequest`/`LoginRequest`/`RegisterResult`/`LoginResult` verbatim as
+  their request/response *bodies*, where the `"type"` field is simply unused.
 - `Message.h` — one struct per message, each with an in-class `toJson()`/`fromJson()`
   pair (built on `nlohmann::json`) — the only place that knows that message's field
-  names. Auth structs (`RegisterRequest`/`LoginRequest`/`RegisterResult`/
-  `LoginResult`/`ErrorResult`) are unchanged. Game structs:
+  names. Auth structs: `RegisterRequest`/`LoginRequest`/`RegisterResult`/`ErrorResult`
+  are unchanged; `LoginResult` gained one new optional field, **`token`** (**Phase 2**
+  — empty unless the API Gateway's REST `/login` populated it; the WebSocket
+  process's own `login_result` reply never sets it, since it only ever verifies a
+  token, never issues one). New (**Phase 2**): `LoginWithTokenRequest{token}` — sent
+  over the WebSocket connection once the client already holds a token from the REST
+  `/login`, replacing the old WS-native password `LoginRequest` for that purpose.
+  Game structs:
   `MoveRequest{fromRow, fromCol, toRow, toCol}`, `JumpRequest{row, col}`,
   `GameViewMessage{GameView view}` (wraps the DTO snapshot directly, calling its own
   `toJson()`/`fromJson()`), `GameStartedMessage`, `GameOverMessage{reason, winnerUserId}`
@@ -829,7 +955,7 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
   `PasswordHasher.cpp`.
 - `server/src/services/AuthService` — thin, networking-agnostic wrapper around
   `IUserRepository&` (never a concrete backend), its own mutex (multiple client
-  connections can call in concurrently once wired into `WebSocketServer`). Now also owns
+  connections can call in concurrently). Now also owns
   the one `PasswordHasher` used for both directions of credential handling:
   `registerUser` hashes before the repository ever sees the password; `login` verifies
   the stored hash against what the repository hands back. This is the seam where
@@ -837,9 +963,28 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
   compares passwords itself. `registerUser` catches `DuplicateUsernameException` (not
   `SQLite::Exception` -- see `server/src/persistence/*` above) to detect a duplicate
   username, so this class has no SQLite-specific code or `#include` at all.
+  **Phase 2**: this class's only caller is now `apigateway/`'s
+  `ApiGatewayRequestHandler` -- `server/`'s own `AuthRequestHandler` was rewritten to
+  never construct or call an `AuthService` at all (see below), which is why
+  `KungFuChessAuth` (and, transitively, `KungFuChessSecurity`/`bcrypt_vendor`) is no
+  longer linked into the `KungFuChessServer` executable (see "Build system" above).
+- `common/Security/TokenService` (**new, Phase 2**) — issues/verifies a small
+  homegrown signed token (deliberately not a real JWT): `issue(userId, nowMillis)`
+  builds `base64url(json{"userId","exp"}) + "." + base64url(HMAC-SHA256(secret, payload))`;
+  `verify(token, nowMillis)` recomputes the HMAC (constant-time compare) and checks
+  `exp`, returning `{valid, userId, error}`. Built on `common/Security/Sha256.h`/`.cpp`,
+  a small vendored (not FetchContent'd -- simple enough to just write out) HMAC-SHA256
+  implementation. `issue()` runs only in `apigateway/`'s `ApiGatewayRequestHandler`
+  (right after `AuthService::login` succeeds); `verify()` runs only in `server/`'s
+  `AuthRequestHandler`. Both processes must be constructed with the same secret string
+  (`KUNGFUCHESS_TOKEN_SECRET` env var, falling back to `common/Config/TokenConfig::
+  DEV_INSECURE_DEFAULT_SECRET` if unset -- see "Known gaps" below). Callers pass in
+  `wallClockMillis()` (`common/WallClock.h`), never `nowMillis()` (`common/
+  MonotonicClock.h`) -- see that header's comment for why steady_clock doesn't work
+  once issuer and verifier are different processes.
 - `server/src/services/ConnectionRegistry` — mutex-guarded `connectionId ->
   {userId, username, score}` (plus the reverse `userId -> connectionId`), populated
-  only by `AuthRequestHandler` on a successful `login` (`register` never authenticates
+  only by `AuthRequestHandler` on a successful login (`register` never authenticates
   a connection). This is the identity binding every later request on that connection is
   checked against — nothing ever trusts a client-claimed user id. `onDisconnected`
   clears both directions on a WebSocket close. **Phase 1b**: `AuthenticatedUser` moved
@@ -959,14 +1104,24 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
   `GameSession::forfeitTo` and its `GameOverEvent` subscriber call the same
   `GameOutcomeFn` (see above) — the only rating-update code path in the whole system,
   covering both game-ending shapes.
-- `server/src/handlers/AuthRequestHandler` — on a successful `login`, also (1) records
+- `server/src/handlers/AuthRequestHandler` — **rewritten in Phase 2**. Only recognizes
+  `login_token` now (`register`/password-based `login` are gone entirely -- they threw
+  `unknown_type` the moment step B landed, and `server/tests/auth_request_handler_test.cpp`
+  asserts exactly that): verifies the token via `TokenService::verify` (constructor
+  dependency, not `AuthService` -- this class no longer depends on `AuthService` at
+  all), then reads the user's username/score via `IUserRepository::findById(verified.userId)`
+  purely for display/`ConnectionRegistry` purposes, never a password field. On success,
+  the shared `completeLogin(connectionId, userId, username, score)` tail (1) records
   `connectionId -> user` in `ConnectionRegistry`, and (2) checks
   `GameSessionManager::findSessionByUserId` — if this user already has an active
   session (a reconnect), rebinds it and pushes a `MatchFoundResult`-shaped resume via an
   injected `SendFn`, *before* returning the `login_result` reply (so it's guaranteed to
   arrive first on the same connection). This is what makes it safe for the client to
   always auto-`find_game` right after a successful login — a returning player is
-  already back in their game by the time that request would arrive.
+  already back in their game by the time that request would arrive. See the
+  top-of-file Phase 2 review note for the full before/after (step A's transitional
+  dual-accept shape, then step B's removal) and exactly what this did to
+  `KungFuChessServer`'s link graph.
 - `server/src/handlers/MatchmakingRequestHandler` — **new**, parallel to
   `AuthRequestHandler`/`GameRequestHandler`: `find_game` requires an authenticated
   connection (`ConnectionRegistry`) with no existing session
@@ -997,23 +1152,36 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
   `KungFuChessAuth`, even though both live under `src/services/` — a library named
   "Auth" building `GameSession` would be a misleading name for what it contains.
 
-### `client/` — one executable, three phases over one connection
+### `client/` — one executable, three phases over one connection (plus one REST hop)
 
 - `client/src/network/WebSocketClient` — unchanged; `setOnMessage(MessageHandler)`
   lets the message handler be replaced after construction, which is exactly how control
   hands off between phases: `CliShell` installs itself first (auth), `main.cpp`'s
   `waitForMatch` installs itself next (matchmaking), and `GameClient` installs itself
   last (the game) — each one fully replacing the last, never composing handlers.
-- `client/src/cli/CliShell` — the auth phase. `run()` installs its own message handler,
-  prints server responses, and specifically blocks (via a `std::condition_variable`,
-  with a timeout) on the `login_result` that follows a `login` command, so it can return
-  a `LoginOutcome{loggedIn, userId, username, score, resumedMatch}` to the caller instead
-  of firing the request and leaving it to guess. `resumedMatch` is populated if a
-  `match_found` push (a reconnect resume — always delivered before `login_result` on the
-  same connection, see `AuthRequestHandler` above) arrived during the same login.
-  `register` is fire-and-forget as before (it never authenticates the connection).
+- `client/src/network/ApiGatewayClient` (**new, Phase 2**) — wraps `ix::HttpClient`
+  (the one file that does), mirroring `WebSocketClient`'s framing. `registerUser(username,
+  password)`/`login(username, password)` are synchronous REST calls against
+  `apigateway/`'s `/register`/`/login` — reusing `protocol::RegisterRequest`/
+  `RegisterResult`/`LoginRequest`/`LoginResult` for the bodies, same as the gateway
+  itself. Makes no WebSocket calls at all; `login`'s returned `LoginResult.token` is
+  what the caller sends over `WebSocketClient` next.
+- `client/src/cli/CliShell` — the auth phase. **Phase 2**: `register`/`login` commands
+  now call `ApiGatewayClient` (synchronous HTTP, no WebSocket round-trip needed for
+  `register` at all anymore). On a successful `login`, sends
+  `LoginWithTokenRequest{token}` over the `WebSocketClient` connection and blocks (via
+  a `std::condition_variable`, with a timeout) on the `login_result` that follows —
+  that part still genuinely belongs on the socket, since it's what binds this
+  connection's identity — to return a `LoginOutcome{loggedIn, userId, username, score,
+  resumedMatch}` to the caller instead of firing the request and leaving it to guess.
+  `resumedMatch` is populated if a `match_found` push (a reconnect resume — always
+  delivered before `login_result` on the same connection, see `AuthRequestHandler`
+  above) arrived during the same login. `CliShell`'s constructor now takes an
+  `ApiGatewayClient&` alongside `WebSocketClient&`.
 - `client/src/main.cpp` — the whole client entry point now (`gui_main.cpp` is gone).
-  Connects, runs `CliShell::run()`; if not logged in, exits. If `resumedMatch` was
+  Constructs `ApiGatewayClient` (pointed at `NetworkConfig::API_GATEWAY_PORT`,
+  **Phase 2**) alongside `WebSocketClient`, passes both into `CliShell`. Connects, runs
+  `CliShell::run()`; if not logged in, exits. If `resumedMatch` was
   already populated, skips matchmaking entirely and goes straight to the game. Otherwise
   calls `waitForMatch` (installs its own handler, sends `FindGameRequest`, blocks on a
   condition variable for `match_found`/`no_match`, auto-retrying — after the user
@@ -1092,13 +1260,19 @@ both implemented now — see "Server / persistence / networking layer" above.)
     (`common/MonotonicClock.h`, wall-clock `steady_clock`), completely independent of
     the `milliseconds` argument that advances the game engine's own logical clock —
     easy to conflate when reading `tick()`, since both fire from the same call.
-16. **Updated, from Phase 1a**: `docker-compose.yml`'s `redis` service is still a
+16. **Updated, from Phase 2**: `docker-compose.yml`'s `redis` service is still a
     placeholder — nothing talks to it yet (reserved for Phase 1b's Redis-backed
     `ConnectionRegistry`/`Matchmaker`/`GameSessionManager` index implementations, not yet
-    done). `postgres` is no longer just a placeholder: `PostgresUserRepository` is real
-    and reachable via `KUNGFUCHESS_POSTGRES_URL`, but `server/src/main.cpp` still opens
-    SQLite by default (that env var is unset everywhere today) — don't mistake "Postgres
-    backend exists and is wired up" for "Postgres is what's actually running."
+    done; still a single Game Node either way, Phase 3+ territory). `postgres` is
+    **no longer optional for the compose stack**: both `server` and the new
+    `apigateway` service now have `KUNGFUCHESS_POSTGRES_URL` set (pointing at the same
+    `postgres` service) in `docker-compose.yml` — this is the point Phase 2 flips
+    Postgres from "reachable but SQLite is still the real default" to "actually
+    required for the two containers to agree on who's registered." A **native, non-Docker**
+    two-process dev run (`KungFuChessServer`/`KungFuChessApiGateway` run directly, no
+    compose) does *not* get this for free — both default independently to their own
+    local `kungfuchess.db` SQLite file unless you export `KUNGFUCHESS_POSTGRES_URL`
+    yourself on both processes (see item 19 below).
 17. **New, from the bcrypt/ELO change**: `GameEngine::executeMove`'s king-capture branch
     reads `destinationPiece`'s color for `GameOverEvent` -- `destinationPiece` is a raw
     pointer into `Board`'s piece vector, and `getBoard().removePiece(motion.getTo())`
@@ -1107,6 +1281,26 @@ both implemented now — see "Server / persistence / networking layer" above.)
     specifically so `GameOverEvent{capturedKingColor}` never dereferences a dangling
     pointer -- if you touch this function again, keep reading anything off
     `destinationPiece` before the `removePiece` call, not after.
+18. **New, from Phase 2**: `KUNGFUCHESS_TOKEN_SECRET` falls back to
+    `common/Config/TokenConfig::DEV_INSECURE_DEFAULT_SECRET` (a fixed, checked-in
+    string) when unset on either `server/` or `apigateway/` — fine for a zero-config
+    native/local run (both processes fall back to the exact same constant), but a
+    real, security-sensitive deployment must set this env var explicitly to a real
+    secret on *both* processes, since anyone who knows the dev default could forge a
+    valid `login_token` for any userId. `docker-compose.yml` currently sets it to a
+    placeholder string (`change-me-to-a-real-secret-before-any-real-deployment`) as a
+    reminder, not a real secret.
+19. **New, from Phase 2**: `KungFuChessApiGateway` (writes users via `AuthService`)
+    and `KungFuChessServer` (reads them via `IUserRepository::findById` for the
+    `login_token` path) are two independent processes that must be configured to
+    point at the *same* user store, or they silently diverge -- e.g. a user
+    registered against one process's local SQLite file is invisible to the other's.
+    `docker-compose.yml` handles this by setting the same `KUNGFUCHESS_POSTGRES_URL`
+    on both services (see item 16 above); a native, non-Docker two-process run must
+    do the same by hand (export the same `KUNGFUCHESS_POSTGRES_URL` before starting
+    both), or accept that registering against one and logging in against the other
+    (a `login_token` for a userId `server/`'s own repository has never heard of)
+    fails with `"unknown_user"`.
 
 ## Where to look for X
 
@@ -1131,17 +1325,20 @@ both implemented now — see "Server / persistence / networking layer" above.)
 | Add a new event / subscribe to a game event | `common/EventBus/Events.h` (new event struct), publisher call sites in `server/src/game/Engine/GameEngine.cpp`, subscriber wiring in `server/src/services/GameSession.cpp` (`subscribeToEvents`) |
 | Change the `users` table / user persistence | `server/src/persistence/Database.cpp` (SQLite schema), `server/src/persistence/SqliteUserRepository.cpp` (SQLite impl), `server/src/persistence/PostgresDatabase.cpp` (Postgres schema), `server/src/persistence/PostgresUserRepository.cpp` (Postgres impl), `server/src/persistence/InMemoryUserRepository.cpp` (in-memory impl); tests in `server/tests/sqlite_user_repository_test.cpp`/`postgres_user_repository_test.cpp`/`in_memory_user_repository_test.cpp` |
 | Add a new user-persistence backend | `server/src/persistence/IUserRepository.h` (implement the interface), `server/src/persistence/RepositoryFactory.cpp` (add a `RepositoryBackend` value + `case`) |
-| Switch which backend `KungFuChessServer` actually opens | `server/src/main.cpp` (currently `RepositoryBackend::Sqlite` unless `KUNGFUCHESS_POSTGRES_URL` is set) |
+| Switch which backend `KungFuChessServer`/`KungFuChessApiGateway` actually opens | `server/src/main.cpp`/`apigateway/src/main.cpp` (each currently `RepositoryBackend::Sqlite` unless `KUNGFUCHESS_POSTGRES_URL` is set — **must be set the same way on both, see Known gaps #19**) |
 | Change password hashing (cost factor, algorithm) | `server/src/security/SecurityConfig.h`, `server/src/security/PasswordHasher.cpp`; tests in `server/tests/password_hasher_test.cpp` |
-| Change register/login business logic (not the DB rows) | `server/src/services/AuthService.cpp`; tests in `server/tests/auth_service_test.cpp` |
+| Change register/login business logic (not the DB rows) | `server/src/services/AuthService.cpp` (called only from `apigateway/src/ApiGatewayRequestHandler.cpp` now — **Phase 2**, `server/`'s own `AuthRequestHandler` never calls it); tests in `server/tests/auth_service_test.cpp`, `apigateway/tests/api_gateway_request_handler_test.cpp` |
+| Add/change a REST endpoint on the API Gateway | `apigateway/src/ApiGatewayRequestHandler.cpp` (request parsing/business logic, testable without HTTP), `apigateway/src/network/ApiGatewayServer.cpp` (path/method routing) |
+| Change how a login token is issued/verified, its TTL, or its signing secret | `common/Security/TokenService.cpp` (issue/verify logic), `common/Security/Sha256.cpp` (the HMAC primitive), `common/Config/TokenConfig.h` (TTL, dev-default secret), `server/src/main.cpp`/`apigateway/src/main.cpp` (`KUNGFUCHESS_TOKEN_SECRET` env wiring — **must match on both, see Known gaps #18**); tests in `server/tests/common_tests/token_service_test.cpp` |
 | Change game-session hosting, tick behavior, or session lookup | `server/src/services/GameSession.cpp`/`GameSessionManager.cpp`; tests in `server/tests/game_session_test.cpp` |
 | Change matchmaking pairing rules, wait timeout, or score range | `common/Config/MatchmakingConfig.h`, `server/src/services/Matchmaker.cpp`; tests in `server/tests/matchmaker_test.cpp` |
 | Change connection-identity/matchmaking-queue/session-index storage, or add a new backend for one | `server/src/services/IConnectionStore.h`/`IMatchQueueStore.h`/`ISessionIndexStore.h` (implement the interface), their `Local*`/`Redis*` implementations; tests in `server/tests/local_connection_store_test.cpp`/`redis_connection_store_test.cpp`/`redis_match_queue_store_test.cpp`/`redis_session_index_store_test.cpp` |
 | Switch `ConnectionRegistry`/`Matchmaker`/`GameSessionManager` to Redis-backed storage | `server/src/main.cpp` (currently local/in-memory unless `KUNGFUCHESS_REDIS_URL` is set) |
 | Change disconnect-grace duration | `common/Config/MatchmakingConfig.h`, `server/src/services/GameSession.cpp` (`tick`, `forfeitTo`) |
 | Change ELO rating math (K-factor, starting rating) or how a game outcome is persisted | `common/Config/RatingConfig.h`, `server/src/services/EloCalculator.cpp` (math), `server/src/services/RatingService.cpp` (persistence); tests in `server/tests/elo_calculator_test.cpp`/`rating_service_test.cpp` |
-| Change reconnect detection/resume behavior | `server/src/handlers/AuthRequestHandler.cpp` (the `login` branch), `server/src/services/GameSessionManager.cpp` (`rebindConnection`), `server/src/services/GameSession.cpp` (`markReconnected`, `resumeInfoFor`) |
+| Change reconnect detection/resume behavior | `server/src/handlers/AuthRequestHandler.cpp` (`completeLogin`, called from the `login_token` branch), `server/src/services/GameSessionManager.cpp` (`rebindConnection`), `server/src/services/GameSession.cpp` (`markReconnected`, `resumeInfoFor`) |
 | Change the auth/matchmaking/game/CLI/GUI hand-off order on the client | `client/src/main.cpp` |
+| Change the REST `register`/`login` calls the client makes, or add a new API Gateway endpoint client-side | `client/src/network/ApiGatewayClient.cpp`, `client/src/cli/CliShell.cpp` |
 | Change the JSON wire format for a message | `protocol/include/protocol/Message.h` (field names, `toJson`/`fromJson`), `protocol/include/protocol/MessageType.h` (the `"type"` string); round-trip tests in `protocol/tests/message_test.cpp` |
 | Add a DTO's own `toJson`/`fromJson`, or change one | `common/DTO/<Type>.h`/`.cpp` — but keep any converting-from-domain constructor in `<Type>FromDomain.cpp` (see DTO layer / Gaps #12 above) |
 | Add a new WebSocket message type/command | `server/src/handlers/GameRequestHandler.cpp` (or `AuthRequestHandler.cpp`/`MatchmakingRequestHandler.cpp`) for dispatch, `protocol/include/protocol/Message.h`/`MessageType.h` for the new request/result structs, `client/src/game/GameClient.cpp` or `client/src/cli/CliShell.cpp` for the client side — `WebSocketServer`/`WebSocketClient` themselves don't need to change for a new message type |

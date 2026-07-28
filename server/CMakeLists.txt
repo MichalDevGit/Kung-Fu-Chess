@@ -209,6 +209,14 @@ target_link_libraries(KungFuChessGameSession PUBLIC KungFuChessGame KungFuChessP
 # specifically -- neither depends on KungFuChessGame/KungFuChessGameSession at
 # all, and the handlers that do need them (AuthRequestHandler,
 # MatchmakingRequestHandler) already live here.
+#
+# Deliberately does NOT link KungFuChessAuth (MIGRATION_PLAN.md Phase 2,
+# step B): AuthRequestHandler only ever verifies a login_token now (via
+# common/Security/TokenService) and reads a user by id via IUserRepository
+# for username/score -- it never touches AuthService/PasswordHasher/bcrypt,
+# which now live only in the apigateway/ process. KungFuChessPersistence is
+# linked directly here for that IUserRepository dependency (previously
+# arrived transitively through KungFuChessAuth).
 file(GLOB NETWORK_SOURCES "src/handlers/*.cpp" "src/network/*.cpp"
     "src/services/ConnectionRegistry.cpp" "src/services/Matchmaker.cpp"
     "src/services/LocalConnectionStore.cpp" "src/services/RedisConnectionStore.cpp"
@@ -222,7 +230,7 @@ file(GLOB NETWORK_HEADERS "src/handlers/*.h" "src/network/*.h"
 
 add_library(KungFuChessNetwork STATIC ${NETWORK_SOURCES} ${NETWORK_HEADERS})
 target_include_directories(KungFuChessNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(KungFuChessNetwork PUBLIC KungFuChessAuth KungFuChessGameSession KungFuChessProtocol ixwebsocket::ixwebsocket redis++_static)
+target_link_libraries(KungFuChessNetwork PUBLIC KungFuChessPersistence KungFuChessGameSession KungFuChessProtocol ixwebsocket::ixwebsocket redis++_static)
 
 # ---- Tests (persistence + auth service + game engine; no sockets involved) ----
 # GLOB_RECURSE so this also picks up tests/game_tests/**/*.cpp (moved from
