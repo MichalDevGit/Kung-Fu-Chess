@@ -6,6 +6,13 @@
 # can't configure or link on Linux at all, so this image passes
 # -DBUILD_CLIENT=OFF (see root CMakeLists.txt) to skip add_subdirectory(client)
 # entirely instead of failing partway through a build nothing here needs.
+#
+# libpq-dev (build stage) / libpq5 (runtime stage): MIGRATION_PLAN.md Phase 1's
+# PostgresUserRepository is only compiled in where find_package(PostgreSQL)
+# succeeds (see server/CMakeLists.txt) -- this is the one place that's always
+# true, so this image is what makes the Postgres backend real for a staging
+# run. SQLite stays the actual default (server/src/main.cpp) unless
+# KUNGFUCHESS_POSTGRES_URL is set at runtime.
 
 # ---- Build stage ----
 FROM ubuntu:22.04 AS build
@@ -15,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cmake \
         git \
         ca-certificates \
+        libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -40,6 +48,7 @@ FROM ubuntu:22.04 AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

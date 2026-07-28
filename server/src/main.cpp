@@ -112,9 +112,16 @@ int main()
     const char* hostOverride = std::getenv("KUNGFUCHESS_HOST");
     const std::string bindHost = hostOverride ? std::string(hostOverride) : NetworkConfig::DEFAULT_HOST;
 
+    // KUNGFUCHESS_POSTGRES_URL is an explicit opt-in only (unset everywhere
+    // today) -- SQLite remains the actual default per MIGRATION_PLAN.md
+    // Phase 1 ("keep SQLite as the default backend until Postgres is
+    // verified in a staging run"). Setting it lets a staging deployment
+    // exercise PostgresUserRepository with zero other code changes.
     const std::string dbPath = "kungfuchess.db";
-    std::unique_ptr<IUserRepository> users =
-        RepositoryFactory::createUserRepository(RepositoryBackend::Sqlite, dbPath);
+    const char* postgresUrl = std::getenv("KUNGFUCHESS_POSTGRES_URL");
+    std::unique_ptr<IUserRepository> users = postgresUrl
+        ? RepositoryFactory::createUserRepository(RepositoryBackend::Postgres, "", postgresUrl)
+        : RepositoryFactory::createUserRepository(RepositoryBackend::Sqlite, dbPath);
     AuthService authService(*users);
     ConnectionRegistry connectionRegistry;
     Matchmaker matchmaker;

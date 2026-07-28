@@ -6,7 +6,44 @@ eventually look. Read this before exploring the source tree — it should make a
 re-read of the sources unnecessary for most tasks. If you change the architecture in a
 way that makes a section below wrong, update that section in the same change.
 
-Last reviewed: 2026-07-27, against the source tree as of MIGRATION_PLAN.md's
+Last reviewed: 2026-07-28, against the source tree as of MIGRATION_PLAN.md's
+Phase 1a ("users/ratings → PostgreSQL"), layered on top of Phase 0
+("Groundwork") described below. That change: `server/src/persistence/
+PostgresDatabase` (owns a `pqxx::connection` + schema, mirroring `Database`'s
+role for SQLite) and `PostgresUserRepository` (implements `IUserRepository`
+against it — `AuthService`/`RatingService`/`GameSessionManager` need zero
+changes, same as adding `InMemoryUserRepository` before it) plus a
+`RepositoryBackend::Postgres` case in `RepositoryFactory`. This backend is
+**optional at configure time**: unlike SQLiteCpp/bcrypt, libpqxx links
+against libpq (the official Postgres C client), whose own build can't
+realistically be vendored-and-built-from-source under MSVC, so `server/
+CMakeLists.txt` does `find_package(PostgreSQL QUIET)` — only if found does it
+`FetchContent` libpqxx, compile `PostgresDatabase`/`PostgresUserRepository`
+for real, and define `KUNGFUCHESS_HAS_POSTGRES` (both files' entire contents
+are guarded by `#ifdef KUNGFUCHESS_HAS_POSTGRES`, compiling to empty
+translation units otherwise); `RepositoryFactory::createUserRepository`
+throws a clear error if `RepositoryBackend::Postgres` is requested in a build
+where it wasn't compiled in. The Dockerfile's build stage now installs
+`libpq-dev` (so this is always true there) and its runtime stage installs
+`libpq5`; a native Windows configure with no system Postgres install is
+completely unaffected. `PostgresUserRepository` locks its own
+`std::mutex` around every method — a real difference from
+`SqliteUserRepository`, needed because a single `pqxx::connection` (unlike
+SQLiteCpp) isn't safe for concurrent use from multiple threads, and
+`IUserRepository` is called from both connection-handling threads
+(`AuthService`) and the tick thread (`RatingService`) with no shared lock
+between them. **SQLite remains the actual default** — `server/src/main.cpp`
+still calls `RepositoryFactory::createUserRepository(RepositoryBackend::
+Sqlite, dbPath)` unconditionally unless the `KUNGFUCHESS_POSTGRES_URL`
+environment variable is set, in which case it opts into
+`RepositoryBackend::Postgres` with that connection string instead — an
+explicit, opt-in seam for a staging run to exercise the new backend, per
+MIGRATION_PLAN.md Phase 1's "keep SQLite as the default backend until
+Postgres is verified in a staging run." `docker-compose.yml`'s `postgres`
+service is unchanged in shape, just documented as reachable this way now
+instead of merely a placeholder.
+
+Previously reviewed against the source tree as of MIGRATION_PLAN.md's
 Phase 0 ("Groundwork") — containerizing today's monolith with no architecture
 change, layered on top of the user-persistence repository-pattern refactor
 described below. That change: a Dockerfile (multi-stage, Linux, builds only
@@ -155,6 +192,11 @@ of scope (TLS, session persistence across a server restart, spectators, resign/d
   since `FetchContent_MakeAvailable` for the same package from two different
   subdirectories would redefine its targets. `server/CMakeLists.txt` separately
   `FetchContent`s `SQLiteCpp` (pinned `3.3.1`) itself, since only `server/` needs it.
+  It also does `find_package(PostgreSQL QUIET)` and, only if that succeeds, `FetchContent`s
+  `libpqxx` (pinned `7.9.2`) — the one dependency in this project that isn't
+  vendor-buildable from source under MSVC the way SQLiteCpp/bcrypt are (libpq's own build
+  needs autoconf/make/bison/flex), so it's optional rather than required; see "Server /
+  persistence / networking layer" below for what's conditional on it.
 - Target graph, by directory (`->` means "links"):
   - `common/`: `KungFuChessCommon` (STATIC — DTOs/enums/EventBus/Config have real
     `.cpp` files, not just headers) `-> nlohmann_json`.
@@ -164,8 +206,9 @@ of scope (TLS, session persistence across a server restart, spectators, resign/d
     deliberately not `KungFuChessGame`, see "DTO layer" below for why that separation
     matters and how it's kept true.
   - `server/`: `KungFuChessPersistence` (STATIC — `IUserRepository`/`SqliteUserRepository`/
-    `InMemoryUserRepository`/`RepositoryFactory`; only `SqliteUserRepository.cpp` actually
-    touches SQLite) `-> SQLiteCpp` ->
+    `InMemoryUserRepository`/`PostgresUserRepository`/`RepositoryFactory`; only
+    `SqliteUserRepository.cpp`/`PostgresDatabase.cpp`/`PostgresUserRepository.cpp` actually
+    touch a real database) `-> SQLiteCpp` (`-> pqxx` too, only when `PostgreSQL_FOUND`) ->
     `KungFuChessAuth` (STATIC, `services/AuthService.cpp` only) `-> KungFuChessPersistence`;
     `KungFuChessGame` (STATIC, all of `src/game/` — model/rules/Engine/Controller/IO)
     `-> KungFuChessCommon`; `KungFuChessGameSession` (STATIC,
@@ -591,7 +634,12 @@ target and this is a vendored single-header third-party file, not project code).
 - `server/tests/` — `auth_service_test.cpp`, `sqlite_user_repository_test.cpp` (SQLite
   implementation, no sockets), `in_memory_user_repository_test.cpp` (same contract
   coverage against the in-memory implementation — see "Server / persistence /
-  networking layer" below); `game_session_test.cpp` (construction pushes to both
+  networking layer" below); `postgres_user_repository_test.cpp` (same contract again,
+  against a real reachable Postgres — `KUNGFUCHESS_TEST_POSTGRES_URL`, defaulting to
+  docker-compose's `postgres` service credentials; truncates `users` up front per
+  `TEST_CASE` since there's no `:memory:`-style disposable database here, unlike SQLite's
+  version; the whole file is a no-op unless `KUNGFUCHESS_HAS_POSTGRES` is defined);
+  `game_session_test.cpp` (construction pushes to both
   participants by connection id, `not_your_piece`/`unknown_connection` rejection,
   per-tick pushes, disconnect suppresses sends to that slot only, reconnect resumes
   them, `tickAll`, `rebindConnection`) and `game_request_handler_test.cpp`
@@ -664,9 +712,10 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
   `findByUsername`/`findById`/`setScore`), `UserRepositoryExceptions.h`
   (`DuplicateUsernameException`, thrown by `createUser` on a duplicate username --
   backend-agnostic on purpose, so callers never need to catch a SQLite-specific type),
-  two implementations (`SqliteUserRepository`, `InMemoryUserRepository`), and
-  `RepositoryFactory::createUserRepository(RepositoryBackend, sqliteDbPath)` — the one
-  place that knows both backends exist and builds whichever one is asked for.
+  three implementations (`SqliteUserRepository`, `InMemoryUserRepository`,
+  `PostgresUserRepository`), and `RepositoryFactory::createUserRepository(RepositoryBackend,
+  sqliteDbPath, postgresConnectionString)` — the one place that knows every backend
+  exists and builds whichever one is asked for.
   `IUserRepository` is deliberately ignorant of hashing: `createUser(username,
   passwordHash)` stores whatever credential string it's given (hashing is
   `AuthService`'s job, see below), and new users start at
@@ -685,11 +734,26 @@ Header-only, depended on by `common/` (its `Message.h` wraps `common::GameView`)
     implementation), no SQLite/file/network dependency at all. Exists both as a fast
     test double (see "Testing" above) and as concrete proof `IUserRepository` really
     decouples business logic from SQLite, not just in theory.
+  - `PostgresUserRepository` (Phase 1 of MIGRATION_PLAN.md) — implements the same
+    contract against `PostgresDatabase` (owns a `pqxx::connection` + schema, mirroring
+    `Database`'s role). Locks its own `std::mutex` around every method, unlike
+    `SqliteUserRepository` — a single `pqxx::connection` isn't safe for concurrent use
+    from multiple threads the way SQLiteCpp is. Both files' entire contents are guarded
+    by `#ifdef KUNGFUCHESS_HAS_POSTGRES`, only ever defined when `server/CMakeLists.txt`'s
+    `find_package(PostgreSQL QUIET)` actually finds libpq (always true in the Docker/Linux
+    build; optional on a native Windows configure, see "Build system" below) — a build
+    without it compiles both to empty translation units, and
+    `RepositoryFactory::createUserRepository` throws instead of failing to compile if
+    `RepositoryBackend::Postgres` is requested anyway.
   - `RepositoryFactory` is the single call site (`server/main.cpp`) that decides
-    `RepositoryBackend::Sqlite` vs. `RepositoryBackend::InMemory` today — adding a third
-    backend later means one new enum value plus one new `case` there, no changes to
+    `RepositoryBackend::Sqlite` vs. `RepositoryBackend::InMemory` vs.
+    `RepositoryBackend::Postgres` today — adding a fourth backend later means one new
+    enum value plus one new `case` there, no changes to
     `AuthService`/`RatingService`/`GameSessionManager`, all of which only ever see
-    `IUserRepository&`.
+    `IUserRepository&`. `server/src/main.cpp` still passes `RepositoryBackend::Sqlite`
+    unconditionally unless the `KUNGFUCHESS_POSTGRES_URL` environment variable is set, in
+    which case it opts into `RepositoryBackend::Postgres` with that connection string —
+    SQLite remains the actual default until a staging run proves Postgres out.
 - `server/src/security/PasswordHasher` — **new**. The only class that knows a hashing
   algorithm exists: `hash(plaintext)`/`verify(plaintext, storedHash)`, wrapping a
   vendored bcrypt (`bcrypt_vendor` target in `server/CMakeLists.txt` -- fetched by
@@ -927,12 +991,13 @@ both implemented now — see "Server / persistence / networking layer" above.)
     (`common/MonotonicClock.h`, wall-clock `steady_clock`), completely independent of
     the `milliseconds` argument that advances the game engine's own logical clock —
     easy to conflate when reading `tick()`, since both fire from the same call.
-16. **New, from Phase 0 groundwork**: `docker-compose.yml`'s `postgres`/`redis`
-    services are placeholders only — nothing in `KungFuChessServer` talks to either
-    yet (SQLite via `SqliteUserRepository` remains the only store actually opened).
-    They exist now so the compose file/network/volumes are in place before
-    MIGRATION_PLAN.md's Phase 1 (externalizing state stores) needs them; don't mistake
-    their presence in `docker-compose.yml` for those backends actually being wired up.
+16. **Updated, from Phase 1a**: `docker-compose.yml`'s `redis` service is still a
+    placeholder — nothing talks to it yet (reserved for Phase 1b's Redis-backed
+    `ConnectionRegistry`/`Matchmaker`/`GameSessionManager` index implementations, not yet
+    done). `postgres` is no longer just a placeholder: `PostgresUserRepository` is real
+    and reachable via `KUNGFUCHESS_POSTGRES_URL`, but `server/src/main.cpp` still opens
+    SQLite by default (that env var is unset everywhere today) — don't mistake "Postgres
+    backend exists and is wired up" for "Postgres is what's actually running."
 17. **New, from the bcrypt/ELO change**: `GameEngine::executeMove`'s king-capture branch
     reads `destinationPiece`'s color for `GameOverEvent` -- `destinationPiece` is a raw
     pointer into `Board`'s piece vector, and `getBoard().removePiece(motion.getTo())`
@@ -963,8 +1028,9 @@ both implemented now — see "Server / persistence / networking layer" above.)
 | Change how pixel clicks map to board cells | `client/src/game/BoardMapper.cpp`, fed via `GameClient::handlePixelClick`/`handlePixelJump` |
 | Add/adjust server-side domain tests | `server/tests/game_tests/<matching-folder>/`, `server/tests/common_tests/` |
 | Add a new event / subscribe to a game event | `common/EventBus/Events.h` (new event struct), publisher call sites in `server/src/game/Engine/GameEngine.cpp`, subscriber wiring in `server/src/services/GameSession.cpp` (`subscribeToEvents`) |
-| Change the `users` table / user persistence | `server/src/persistence/Database.cpp` (schema), `server/src/persistence/SqliteUserRepository.cpp` (SQLite impl), `server/src/persistence/InMemoryUserRepository.cpp` (in-memory impl); tests in `server/tests/sqlite_user_repository_test.cpp`/`in_memory_user_repository_test.cpp` |
+| Change the `users` table / user persistence | `server/src/persistence/Database.cpp` (SQLite schema), `server/src/persistence/SqliteUserRepository.cpp` (SQLite impl), `server/src/persistence/PostgresDatabase.cpp` (Postgres schema), `server/src/persistence/PostgresUserRepository.cpp` (Postgres impl), `server/src/persistence/InMemoryUserRepository.cpp` (in-memory impl); tests in `server/tests/sqlite_user_repository_test.cpp`/`postgres_user_repository_test.cpp`/`in_memory_user_repository_test.cpp` |
 | Add a new user-persistence backend | `server/src/persistence/IUserRepository.h` (implement the interface), `server/src/persistence/RepositoryFactory.cpp` (add a `RepositoryBackend` value + `case`) |
+| Switch which backend `KungFuChessServer` actually opens | `server/src/main.cpp` (currently `RepositoryBackend::Sqlite` unless `KUNGFUCHESS_POSTGRES_URL` is set) |
 | Change password hashing (cost factor, algorithm) | `server/src/security/SecurityConfig.h`, `server/src/security/PasswordHasher.cpp`; tests in `server/tests/password_hasher_test.cpp` |
 | Change register/login business logic (not the DB rows) | `server/src/services/AuthService.cpp`; tests in `server/tests/auth_service_test.cpp` |
 | Change game-session hosting, tick behavior, or session lookup | `server/src/services/GameSession.cpp`/`GameSessionManager.cpp`; tests in `server/tests/game_session_test.cpp` |

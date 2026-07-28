@@ -12,7 +12,12 @@
 enum class RepositoryBackend
 {
     Sqlite,
-    InMemory
+    InMemory,
+    // Only actually constructible in a build where libpq was found at
+    // configure time (see server/CMakeLists.txt / KUNGFUCHESS_HAS_POSTGRES) --
+    // createUserRepository throws otherwise instead of failing to compile,
+    // so this enum value itself is always valid to reference.
+    Postgres
 };
 
 // The single place that decides which concrete IUserRepository gets built.
@@ -23,8 +28,12 @@ class RepositoryFactory
 {
 public:
     // sqliteDbPath is only used (and required) when backend == Sqlite.
+    // postgresConnectionString is only used (and required) when backend ==
+    // Postgres -- a libpq connection string/URI.
     static std::unique_ptr<IUserRepository> createUserRepository(
-        RepositoryBackend backend, const std::string& sqliteDbPath = "");
+        RepositoryBackend backend,
+        const std::string& sqliteDbPath = "",
+        const std::string& postgresConnectionString = "");
 };
 
 #endif

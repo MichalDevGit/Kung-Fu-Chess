@@ -19,6 +19,28 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SQLiteCpp)
 
+# ---- Postgres (Phase 1 of MIGRATION_PLAN.md: PostgresUserRepository) ----
+# Optional, unlike SQLiteCpp/bcrypt above: libpqxx links against libpq (the
+# official Postgres C client), and libpq's own build (autoconf/make, needs
+# bison/flex/perl) isn't something this project can vendor-and-build-from-
+# source under MSVC the way bcrypt was hand-rolled. QUIET here (not REQUIRED)
+# so a native Windows configure with no system Postgres install keeps working
+# exactly as before -- PostgresUserRepository.cpp/.h simply compile to empty
+# translation units, and RepositoryFactory throws a clear error if
+# RepositoryBackend::Postgres is selected in a build where this wasn't found.
+# The Docker/Linux build always finds it (see Dockerfile's libpq-dev).
+find_package(PostgreSQL QUIET)
+if(PostgreSQL_FOUND)
+    set(SKIP_BUILD_TEST ON CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        libpqxx
+        GIT_REPOSITORY https://github.com/jtv/libpqxx.git
+        GIT_TAG        7.9.2
+    )
+    FetchContent_MakeAvailable(libpqxx)
+endif()
+
 # bcrypt (vendored source only -- its own CMakeLists.txt targets GCC/make
 # with a GNU-assembler .S file and won't configure under the MSVC generator
 # this project builds with, so FetchContent_Populate fetches the sources
@@ -49,6 +71,16 @@ if(WIN32)
     # bcrypt_gensalt's Windows path uses CryptAcquireContext/CryptGenRandom
     # (wincrypt.h) for salt randomness instead of /dev/urandom.
     target_link_libraries(bcrypt_vendor PUBLIC Advapi32)
+else()
+    # bcrypt.c/crypt_blowfish.c/crypt_gensalt.c/wrapper.c's non-_WIN32 branch
+    # bare-includes their own headers (e.g. #include "bcrypt.h", not
+    # "bcrypt/bcrypt.h") -- needs the headers' own directory on the include
+    # path directly, not just its parent, to compile on Linux/GCC. Must stay
+    # WIN32-gated: on Windows this directory on the include path makes
+    # #include <bcrypt.h> (pulled in transitively via wincrypt.h/ncrypt.h)
+    # resolve to this vendored header instead of the real Windows CNG
+    # bcrypt.h, breaking the MSVC build entirely.
+    target_include_directories(bcrypt_vendor PRIVATE ${bcrypt_SOURCE_DIR}/include/bcrypt)
 endif()
 
 # ---- Security library (password hashing -- the only thing that gets to
@@ -67,6 +99,13 @@ file(GLOB PERSISTENCE_HEADERS "src/persistence/*.h")
 add_library(KungFuChessPersistence STATIC ${PERSISTENCE_SOURCES} ${PERSISTENCE_HEADERS})
 target_include_directories(KungFuChessPersistence PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(KungFuChessPersistence PUBLIC SQLiteCpp)
+if(PostgreSQL_FOUND)
+    # PUBLIC: RepositoryFactory.cpp (a different translation unit in this
+    # same target) also needs KUNGFUCHESS_HAS_POSTGRES defined to know to
+    # #include PostgresUserRepository.h and compile its real Postgres case.
+    target_link_libraries(KungFuChessPersistence PUBLIC pqxx)
+    target_compile_definitions(KungFuChessPersistence PUBLIC KUNGFUCHESS_HAS_POSTGRES)
+endif()
 
 # ---- Auth service (DB-backed business logic; no networking types) ----
 file(GLOB AUTH_SOURCES "src/services/AuthService.cpp")

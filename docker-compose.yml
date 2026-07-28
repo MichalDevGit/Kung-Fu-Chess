@@ -14,9 +14,11 @@ services:
     volumes:
       - kungfuchess-data:/app/data
 
-  # Unused by the app today -- SQLite is still the only store KungFuChessServer
-  # actually opens (see server/src/main.cpp). Reserved for Phase 1's
-  # PostgresUserRepository.
+  # PostgresUserRepository (MIGRATION_PLAN.md Phase 1) exists now, but SQLite
+  # stays the server's actual default -- see server/src/main.cpp. Set
+  # KUNGFUCHESS_POSTGRES_URL on the `server` service (not done here by
+  # default) to opt this deployment into Postgres, e.g.
+  # postgresql://kungfuchess:kungfuchess@postgres:5432/kungfuchess.
   postgres:
     image: postgres:16-alpine
     environment:
