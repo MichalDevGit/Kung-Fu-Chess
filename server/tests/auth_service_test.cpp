@@ -1,7 +1,7 @@
 #include "tests/doctest.h"
 
-#include "persistence/InMemoryUserRepository.h"
-#include "services/AuthService.h"
+#include "persistence/InMemory/InMemoryUserRepository.h"
+#include "services/Auth/AuthService.h"
 #include "../../common/Config/RatingConfig.h"
 
 TEST_CASE("Testing AuthService")

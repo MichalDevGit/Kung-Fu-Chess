@@ -3,8 +3,8 @@
 
 #include <string>
 
-#include "Database.h"
-#include "IUserRepository.h"
+#include "SqliteDatabase.h"
+#include "../IUserRepository.h"
 
 // SQLite-backed IUserRepository. Owns its own Database connection (pass a
 // real file path for normal use, or ":memory:" for a disposable, per-test
@@ -26,7 +26,7 @@ private:
     // not a logical constness violation) -- findByUsername/findById stay
     // const from IUserRepository's point of view, same as before this class
     // owned its Database by value instead of taking one by reference.
-    mutable Database database;
+    mutable SqliteDatabase database;
 };
 
 #endif

@@ -1,6 +1,6 @@
 #include "tests/doctest.h"
 
-#include "persistence/InMemoryUserRepository.h"
+#include "persistence/InMemory/InMemoryUserRepository.h"
 #include "persistence/UserRepositoryExceptions.h"
 #include "../../common/Config/RatingConfig.h"
 

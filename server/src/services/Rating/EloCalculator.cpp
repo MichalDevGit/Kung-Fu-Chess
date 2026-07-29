@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-#include "../../../common/Config/RatingConfig.h"
+#include "../../../../common/Config/RatingConfig.h"
 
 double EloCalculator::expectedScore(int rating, int opponentRating)
 {

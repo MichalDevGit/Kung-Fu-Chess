@@ -2,10 +2,10 @@
 
 #include <stdexcept>
 
-#include "InMemoryUserRepository.h"
-#include "SqliteUserRepository.h"
+#include "../InMemory/InMemoryUserRepository.h"
+#include "../Sqlite/SqliteUserRepository.h"
 #ifdef KUNGFUCHESS_HAS_POSTGRES
-#include "PostgresUserRepository.h"
+#include "../Postgres/PostgresUserRepository.h"
 #endif
 
 std::unique_ptr<IUserRepository> RepositoryFactory::createUserRepository(

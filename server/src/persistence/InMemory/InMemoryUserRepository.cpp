@@ -1,7 +1,7 @@
 #include "InMemoryUserRepository.h"
 
-#include "UserRepositoryExceptions.h"
-#include "../../../common/Config/RatingConfig.h"
+#include "../UserRepositoryExceptions.h"
+#include "../../../../common/Config/RatingConfig.h"
 
 UserRecord InMemoryUserRepository::createUser(const std::string& username, const std::string& passwordHash)
 {

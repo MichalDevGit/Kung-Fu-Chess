@@ -1,8 +1,8 @@
 #include "tests/doctest.h"
 #include "handlers/GameRequestHandler.h"
-#include "services/GameSessionManager.h"
-#include "services/LocalSessionIndexStore.h"
-#include "persistence/InMemoryUserRepository.h"
+#include "services/GameSession/GameSessionManager.h"
+#include "services/SessionIndex/LocalSessionIndexStore.h"
+#include "persistence/InMemory/InMemoryUserRepository.h"
 
 #include <nlohmann/json.hpp>
 #include <string>

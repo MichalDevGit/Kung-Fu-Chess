@@ -4,7 +4,7 @@
 #include <memory>
 #include <string>
 
-#include "IUserRepository.h"
+#include "../IUserRepository.h"
 
 // Every user-persistence backend this codebase knows how to construct.
 // Adding a new backend means one new value here plus one new case in

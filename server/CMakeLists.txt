@@ -149,8 +149,8 @@ target_include_directories(KungFuChessSecurity PUBLIC ${CMAKE_CURRENT_SOURCE_DIR
 target_link_libraries(KungFuChessSecurity PUBLIC bcrypt_vendor)
 
 # ---- Persistence library ----
-file(GLOB PERSISTENCE_SOURCES "src/persistence/*.cpp")
-file(GLOB PERSISTENCE_HEADERS "src/persistence/*.h")
+file(GLOB_RECURSE PERSISTENCE_SOURCES "src/persistence/*.cpp")
+file(GLOB_RECURSE PERSISTENCE_HEADERS "src/persistence/*.h")
 
 add_library(KungFuChessPersistence STATIC ${PERSISTENCE_SOURCES} ${PERSISTENCE_HEADERS})
 target_include_directories(KungFuChessPersistence PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -164,8 +164,8 @@ if(PostgreSQL_FOUND)
 endif()
 
 # ---- Auth service (DB-backed business logic; no networking types) ----
-file(GLOB AUTH_SOURCES "src/services/AuthService.cpp")
-file(GLOB AUTH_HEADERS "src/services/AuthService.h")
+file(GLOB AUTH_SOURCES "src/services/Auth/AuthService.cpp")
+file(GLOB AUTH_HEADERS "src/services/Auth/AuthService.h")
 
 add_library(KungFuChessAuth STATIC ${AUTH_SOURCES} ${AUTH_HEADERS})
 target_include_directories(KungFuChessAuth PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -187,12 +187,12 @@ target_link_libraries(KungFuChessGame PUBLIC KungFuChessCommon)
 # Kept as its own target, separate from KungFuChessAuth, even though both
 # live under src/services/ -- a library named "Auth" building GameSession
 # would be a misleading name for what it actually contains.
-file(GLOB GAME_SESSION_SOURCES "src/services/GameSession.cpp" "src/services/GameSessionManager.cpp"
-    "src/services/EloCalculator.cpp" "src/services/RatingService.cpp"
-    "src/services/LocalSessionIndexStore.cpp" "src/services/RedisSessionIndexStore.cpp")
-file(GLOB GAME_SESSION_HEADERS "src/services/GameSession.h" "src/services/GameSessionManager.h"
-    "src/services/EloCalculator.h" "src/services/RatingService.h"
-    "src/services/ISessionIndexStore.h" "src/services/LocalSessionIndexStore.h" "src/services/RedisSessionIndexStore.h")
+file(GLOB GAME_SESSION_SOURCES "src/services/GameSession/GameSession.cpp" "src/services/GameSession/GameSessionManager.cpp"
+    "src/services/Rating/EloCalculator.cpp" "src/services/Rating/RatingService.cpp"
+    "src/services/SessionIndex/LocalSessionIndexStore.cpp" "src/services/SessionIndex/RedisSessionIndexStore.cpp")
+file(GLOB GAME_SESSION_HEADERS "src/services/GameSession/GameSession.h" "src/services/GameSession/GameSessionManager.h"
+    "src/services/Rating/EloCalculator.h" "src/services/Rating/RatingService.h"
+    "src/services/SessionIndex/ISessionIndexStore.h" "src/services/SessionIndex/LocalSessionIndexStore.h" "src/services/SessionIndex/RedisSessionIndexStore.h")
 
 add_library(KungFuChessGameSession STATIC ${GAME_SESSION_SOURCES} ${GAME_SESSION_HEADERS})
 target_include_directories(KungFuChessGameSession PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -218,15 +218,15 @@ target_link_libraries(KungFuChessGameSession PUBLIC KungFuChessGame KungFuChessP
 # linked directly here for that IUserRepository dependency (previously
 # arrived transitively through KungFuChessAuth).
 file(GLOB NETWORK_SOURCES "src/handlers/*.cpp" "src/network/*.cpp"
-    "src/services/ConnectionRegistry.cpp" "src/services/Matchmaker.cpp"
-    "src/services/LocalConnectionStore.cpp" "src/services/RedisConnectionStore.cpp"
-    "src/services/LocalMatchQueueStore.cpp" "src/services/RedisMatchQueueStore.cpp")
+    "src/services/Connection/ConnectionRegistry.cpp" "src/services/Matchmaking/Matchmaker.cpp"
+    "src/services/Connection/LocalConnectionStore.cpp" "src/services/Connection/RedisConnectionStore.cpp"
+    "src/services/Matchmaking/LocalMatchQueueStore.cpp" "src/services/Matchmaking/RedisMatchQueueStore.cpp")
 file(GLOB NETWORK_HEADERS "src/handlers/*.h" "src/network/*.h"
-    "src/services/ConnectionRegistry.h" "src/services/Matchmaker.h"
-    "src/services/AuthenticatedUser.h" "src/services/IConnectionStore.h"
-    "src/services/LocalConnectionStore.h" "src/services/RedisConnectionStore.h"
-    "src/services/MatchmakingTypes.h" "src/services/IMatchQueueStore.h"
-    "src/services/LocalMatchQueueStore.h" "src/services/RedisMatchQueueStore.h")
+    "src/services/Connection/ConnectionRegistry.h" "src/services/Matchmaking/Matchmaker.h"
+    "src/services/Connection/AuthenticatedUser.h" "src/services/Connection/IConnectionStore.h"
+    "src/services/Connection/LocalConnectionStore.h" "src/services/Connection/RedisConnectionStore.h"
+    "src/services/Matchmaking/MatchmakingTypes.h" "src/services/Matchmaking/IMatchQueueStore.h"
+    "src/services/Matchmaking/LocalMatchQueueStore.h" "src/services/Matchmaking/RedisMatchQueueStore.h")
 
 add_library(KungFuChessNetwork STATIC ${NETWORK_SOURCES} ${NETWORK_HEADERS})
 target_include_directories(KungFuChessNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)

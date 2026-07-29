@@ -1,8 +1,8 @@
 // Requires a real, reachable Redis -- see redis_connection_store_test.cpp
 // for why this isn't behind a compile-time macro.
 #include "tests/doctest.h"
-#include "services/Matchmaker.h"
-#include "services/RedisMatchQueueStore.h"
+#include "services/Matchmaking/Matchmaker.h"
+#include "services/Matchmaking/RedisMatchQueueStore.h"
 #include "common/Config/MatchmakingConfig.h"
 
 #include <cstdlib>

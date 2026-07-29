@@ -1,6 +1,6 @@
 #include "tests/doctest.h"
-#include "services/ConnectionRegistry.h"
-#include "services/LocalConnectionStore.h"
+#include "services/Connection/ConnectionRegistry.h"
+#include "services/Connection/LocalConnectionStore.h"
 
 namespace
 {

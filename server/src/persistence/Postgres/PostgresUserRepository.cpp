@@ -2,8 +2,8 @@
 
 #ifdef KUNGFUCHESS_HAS_POSTGRES
 
-#include "UserRepositoryExceptions.h"
-#include "../../../common/Config/RatingConfig.h"
+#include "../UserRepositoryExceptions.h"
+#include "../../../../common/Config/RatingConfig.h"
 
 namespace
 {

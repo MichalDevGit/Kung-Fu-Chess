@@ -21,7 +21,7 @@
 // the handlers themselves run unlocked, on the calling thread, after the lock
 // is released. This keeps a handler that itself calls subscribe/unsubscribe/
 // publish from deadlocking, and matches the rest of this codebase's plain-
-// std::mutex style (see server/src/services/AuthService) rather than a
+// std::mutex style (see server/src/services/Auth/AuthService) rather than a
 // queued/dispatched model, since nothing here needs deferred delivery.
 class EventBus
 {

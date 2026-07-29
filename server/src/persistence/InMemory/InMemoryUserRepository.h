@@ -4,7 +4,7 @@
 #include <mutex>
 #include <unordered_map>
 
-#include "IUserRepository.h"
+#include "../IUserRepository.h"
 
 // Dependency-free IUserRepository backed by a plain in-memory map -- no
 // SQLite, no file/network I/O. Exists both as a fast test double and as

@@ -6,11 +6,11 @@
 #include "common/Config/TokenConfig.h"
 #include "common/Security/TokenService.h"
 #include "common/WallClock.h"
-#include "persistence/InMemoryUserRepository.h"
-#include "services/ConnectionRegistry.h"
-#include "services/GameSessionManager.h"
-#include "services/LocalConnectionStore.h"
-#include "services/LocalSessionIndexStore.h"
+#include "persistence/InMemory/InMemoryUserRepository.h"
+#include "services/Connection/ConnectionRegistry.h"
+#include "services/GameSession/GameSessionManager.h"
+#include "services/Connection/LocalConnectionStore.h"
+#include "services/SessionIndex/LocalSessionIndexStore.h"
 
 namespace
 {

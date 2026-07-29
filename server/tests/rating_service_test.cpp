@@ -1,8 +1,8 @@
 #include "tests/doctest.h"
 
-#include "services/RatingService.h"
-#include "services/EloCalculator.h"
-#include "persistence/InMemoryUserRepository.h"
+#include "services/Rating/RatingService.h"
+#include "services/Rating/EloCalculator.h"
+#include "persistence/InMemory/InMemoryUserRepository.h"
 
 TEST_CASE("Testing RatingService")
 {

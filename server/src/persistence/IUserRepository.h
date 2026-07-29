@@ -18,7 +18,7 @@ public:
 
     // Inserts a row with passwordHash stored exactly as given. Implementations
     // are deliberately ignorant of hashing -- they store whatever credential
-    // string the caller hands them (see server/src/services/AuthService, the
+    // string the caller hands them (see server/src/services/Auth/AuthService, the
     // only caller, which owns the PasswordHasher). New users start at
     // RatingConfig::INITIAL_RATING. Throws DuplicateUsernameException
     // (see UserRepositoryExceptions.h) if the username already exists.

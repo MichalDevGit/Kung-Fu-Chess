@@ -2,7 +2,7 @@
 
 #include <utility>
 
-#include "../persistence/IUserRepository.h"
+#include "../../persistence/IUserRepository.h"
 
 GameSessionManager::GameSessionManager(GameSession::SendToFn sendTo, IUserRepository& userRepository, ISessionIndexStore& indexStore)
     : sendTo(std::move(sendTo))

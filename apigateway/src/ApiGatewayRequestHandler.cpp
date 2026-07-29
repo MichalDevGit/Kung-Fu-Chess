@@ -5,7 +5,7 @@
 #include "common/Security/TokenService.h"
 #include "common/WallClock.h"
 #include "protocol/Message.h"
-#include "services/AuthService.h"
+#include "services/Auth/AuthService.h"
 
 ApiGatewayRequestHandler::ApiGatewayRequestHandler(AuthService& authService, security::TokenService& tokenService)
     : authService(authService)

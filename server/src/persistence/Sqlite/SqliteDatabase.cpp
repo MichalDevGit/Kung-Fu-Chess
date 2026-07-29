@@ -1,17 +1,17 @@
-#include "Database.h"
+#include "SqliteDatabase.h"
 
-Database::Database(const std::string& path)
+SqliteDatabase::SqliteDatabase(const std::string& path)
     : db(path, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE)
 {
     createSchema();
 }
 
-SQLite::Database& Database::raw()
+SQLite::Database& SqliteDatabase::raw()
 {
     return db;
 }
 
-void Database::createSchema()
+void SqliteDatabase::createSchema()
 {
     // score's "DEFAULT 0" below is never actually relied on -- every
     // IUserRepository::createUser implementation always inserts an explicit

@@ -1,8 +1,8 @@
 #include "tests/doctest.h"
-#include "services/GameSession.h"
-#include "services/GameSessionManager.h"
-#include "services/LocalSessionIndexStore.h"
-#include "persistence/InMemoryUserRepository.h"
+#include "services/GameSession/GameSession.h"
+#include "services/GameSession/GameSessionManager.h"
+#include "services/SessionIndex/LocalSessionIndexStore.h"
+#include "persistence/InMemory/InMemoryUserRepository.h"
 
 #include <algorithm>
 #include <string>

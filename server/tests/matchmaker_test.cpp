@@ -1,6 +1,6 @@
 #include "tests/doctest.h"
-#include "services/Matchmaker.h"
-#include "services/LocalMatchQueueStore.h"
+#include "services/Matchmaking/Matchmaker.h"
+#include "services/Matchmaking/LocalMatchQueueStore.h"
 #include "common/Config/MatchmakingConfig.h"
 
 #include <vector>

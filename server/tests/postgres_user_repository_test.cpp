@@ -14,7 +14,7 @@
 
 #include <pqxx/pqxx>
 
-#include "persistence/PostgresUserRepository.h"
+#include "persistence/Postgres/PostgresUserRepository.h"
 #include "persistence/UserRepositoryExceptions.h"
 #include "../../common/Config/RatingConfig.h"
 

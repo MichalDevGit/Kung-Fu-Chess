@@ -5,8 +5,8 @@
 // it just needs Redis reachable to pass, same as this project's own server
 // would need it to actually use RedisConnectionStore.
 #include "tests/doctest.h"
-#include "services/ConnectionRegistry.h"
-#include "services/RedisConnectionStore.h"
+#include "services/Connection/ConnectionRegistry.h"
+#include "services/Connection/RedisConnectionStore.h"
 
 #include <cstdlib>
 #include <sw/redis++/redis++.h>

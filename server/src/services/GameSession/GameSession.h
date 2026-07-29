@@ -6,12 +6,12 @@
 #include <optional>
 #include <string>
 
-#include "../../../common/EventBus/EventBus.h"
-#include "../../../common/DTO/GameView.h"
-#include "../../../common/enums/PieceColor.h"
-#include "../game/Engine/GameEngine.h"
-#include "../game/Controller/Controller.h"
-#include "../game/model/Position.h"
+#include "../../../../common/EventBus/EventBus.h"
+#include "../../../../common/DTO/GameView.h"
+#include "../../../../common/enums/PieceColor.h"
+#include "../../game/Engine/GameEngine.h"
+#include "../../game/Controller/Controller.h"
+#include "../../game/model/Position.h"
 
 // Owns one authoritative 1v1 match: its own EventBus, GameEngine, and
 // Controller, plus exactly two participants (assigned White/Black at

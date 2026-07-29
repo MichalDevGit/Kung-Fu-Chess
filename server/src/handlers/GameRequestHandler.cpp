@@ -4,7 +4,7 @@
 
 #include "protocol/Message.h"
 #include "protocol/MessageType.h"
-#include "services/GameSessionManager.h"
+#include "services/GameSession/GameSessionManager.h"
 
 GameRequestHandler::GameRequestHandler(GameSessionManager& sessionManager)
     : sessionManager(sessionManager)

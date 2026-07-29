@@ -1,4 +1,4 @@
-#include "services/AuthService.h"
+#include "services/Auth/AuthService.h"
 
 #include "persistence/IUserRepository.h"
 #include "persistence/UserRecord.h"

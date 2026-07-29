@@ -1,6 +1,6 @@
 #include "tests/doctest.h"
 
-#include "persistence/SqliteUserRepository.h"
+#include "persistence/Sqlite/SqliteUserRepository.h"
 #include "persistence/UserRepositoryExceptions.h"
 #include "../../common/Config/RatingConfig.h"
 

@@ -10,9 +10,9 @@
 #include "common/WallClock.h"
 #include "persistence/IUserRepository.h"
 #include "persistence/UserRecord.h"
-#include "services/ConnectionRegistry.h"
-#include "services/GameSession.h"
-#include "services/GameSessionManager.h"
+#include "services/Connection/ConnectionRegistry.h"
+#include "services/GameSession/GameSession.h"
+#include "services/GameSession/GameSessionManager.h"
 
 AuthRequestHandler::AuthRequestHandler(
     IUserRepository& users,

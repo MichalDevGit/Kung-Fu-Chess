@@ -2,10 +2,10 @@
 
 #include <utility>
 
-#include "../game/IO/GameFactory.h"
-#include "../../../common/EventBus/Events.h"
-#include "../../../common/MonotonicClock.h"
-#include "../../../common/Config/MatchmakingConfig.h"
+#include "../../game/IO/GameFactory.h"
+#include "../../../../common/EventBus/Events.h"
+#include "../../../../common/MonotonicClock.h"
+#include "../../../../common/Config/MatchmakingConfig.h"
 #include "protocol/Message.h"
 
 GameSession::GameSession(std::string id, Player white, Player black, SendToFn sendTo, GameOutcomeFn gameOutcome)

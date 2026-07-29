@@ -10,7 +10,7 @@ namespace RatingConfig
     constexpr int INITIAL_RATING = 1200;
 
     // Standard ELO K-factor: how many rating points are at stake per game.
-    // Used by server/src/services/EloCalculator for every game-over outcome,
+    // Used by server/src/services/Rating/EloCalculator for every game-over outcome,
     // replacing the old flat MatchmakingConfig::SCORE_DELTA_WIN/_LOSS.
     constexpr int K_FACTOR = 32;
 }

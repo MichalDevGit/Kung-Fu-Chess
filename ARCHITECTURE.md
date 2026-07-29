@@ -200,8 +200,8 @@ implementation (`bcrypt_vendor`, source-fetched via `FetchContent_Populate` in
 two-method `hash`/`verify` interface, with `AuthService` now the only thing that calls
 it — `UserRepository` itself no longer knows hashing exists at all, just stores whatever
 credential string it's given; (b) `common/Config/RatingConfig.h` +
-`server/src/services/EloCalculator` (pure math, no DB) + `server/src/services/
-RatingService` (reads both players' current ratings, computes new ones, persists both)
+`server/src/services/Rating/EloCalculator` (pure math, no DB) + `server/src/services/
+Rating/RatingService` (reads both players' current ratings, computes new ones, persists both)
 replace the old flat `MatchmakingConfig::SCORE_DELTA_WIN`/`_LOSS`, and — fixing a real
 gap this surfaced — an ordinary king-capture win now updates rating too, not just a
 disconnect-timeout forfeit: `GameSession`'s `ScoreUpdateFn` became `GameOutcomeFn`
@@ -216,8 +216,8 @@ change (five phases, tracked in that order, layered on top of the earlier networ
 client/server split): (1) `server/src/network/WebSocketServer` threaded a stable
 per-connection id through every request, plus a targeted `sendTo(connectionId, json)`
 and a `setCloseHandler` for drop notifications, and `server/src/services/
-ConnectionRegistry` was added to bind `connectionId -> {userId, username, score}` the
-moment `login` succeeds; (2) `server/src/services/Matchmaker` (a plain score/queue-order
+Connection/ConnectionRegistry` was added to bind `connectionId -> {userId, username, score}` the
+moment `login` succeeds; (2) `server/src/services/Matchmaking/Matchmaker` (a plain score/queue-order
 pairing scan, driven off the existing tick thread) plus new `protocol/` messages
 (`find_game`/`match_found`/`no_match`) and `server/src/handlers/
 MatchmakingRequestHandler` were added, dispatched in a three-way `auth -> matchmaking ->
@@ -310,20 +310,20 @@ of scope (TLS, session persistence across a server restart, spectators, resign/d
     `InMemoryUserRepository`/`PostgresUserRepository`/`RepositoryFactory`; only
     `SqliteUserRepository.cpp`/`PostgresDatabase.cpp`/`PostgresUserRepository.cpp` actually
     touch a real database) `-> SQLiteCpp` (`-> pqxx` too, only when `PostgreSQL_FOUND`) ->
-    `KungFuChessAuth` (STATIC, `services/AuthService.cpp` only) `-> KungFuChessPersistence`;
+    `KungFuChessAuth` (STATIC, `services/Auth/AuthService.cpp` only) `-> KungFuChessPersistence`;
     `KungFuChessGame` (STATIC, all of `src/game/` — model/rules/Engine/Controller/IO)
     `-> KungFuChessCommon`; `KungFuChessGameSession` (STATIC,
-    `services/GameSession.cpp`+`GameSessionManager.cpp`+`services/LocalSessionIndexStore.cpp`+
-    `services/RedisSessionIndexStore.cpp` — kept separate from
+    `services/GameSession/GameSession.cpp`+`GameSessionManager.cpp`+`services/SessionIndex/LocalSessionIndexStore.cpp`+
+    `services/SessionIndex/RedisSessionIndexStore.cpp` — kept separate from
     `KungFuChessAuth` on purpose, see below) `-> KungFuChessGame, KungFuChessProtocol,
     KungFuChessPersistence, redis++_static` (`KungFuChessPersistence` added for
     `IUserRepository`, which `GameSessionManager` now takes directly to build every
     session's forfeit-score callback; `redis++_static` for `RedisSessionIndexStore` —
     see "Server / persistence / networking layer" below);
-    `KungFuChessNetwork` (STATIC, `handlers/`+`network/`+`services/ConnectionRegistry.cpp`+
-    `services/Matchmaker.cpp`+`services/LocalConnectionStore.cpp`+
-    `services/RedisConnectionStore.cpp`+`services/LocalMatchQueueStore.cpp`+
-    `services/RedisMatchQueueStore.cpp` — the `ConnectionRegistry`/`Matchmaker` family
+    `KungFuChessNetwork` (STATIC, `handlers/`+`network/`+`services/Connection/ConnectionRegistry.cpp`+
+    `services/Matchmaking/Matchmaker.cpp`+`services/Connection/LocalConnectionStore.cpp`+
+    `services/Connection/RedisConnectionStore.cpp`+`services/Matchmaking/LocalMatchQueueStore.cpp`+
+    `services/Matchmaking/RedisMatchQueueStore.cpp` — the `ConnectionRegistry`/`Matchmaker` family
     compiled here since none of it depends on `KungFuChessGame`/`KungFuChessGameSession`
     at all, and the handlers that need them already live in this library)
     `-> KungFuChessPersistence, KungFuChessGameSession, KungFuChessProtocol, ixwebsocket, redis++_static`
@@ -409,7 +409,7 @@ server: ConnectionRegistry, Matchmaker, AuthRequestHandler, MatchmakingRequestHa
 server/src/network (WebSocketServer)   <-- per-connection-id request/response + targeted
                                             push transport, unaware of game/ at all
 
-apigateway/src/*        <-- depends on server/src/services/AuthService (reused directly,
+apigateway/src/*        <-- depends on server/src/services/Auth/AuthService (reused directly,
   (new, Phase 2)             not duplicated) + common/Security/TokenService + protocol/
   ApiGatewayRequestHandler   REST body <-> AuthService/TokenService translation, testable
                              without a real HTTP server (mirrors AuthRequestHandler's split)
@@ -543,7 +543,7 @@ type-safe publish/subscribe bus (`EventBus.h`, zero dependency on anything chess
 specific) plus the chess-specific payload structs (`Events.h`: `GameStartedEvent`,
 `MoveExecutedEvent{pieceId, from, to}`, `PieceCapturedEvent{pieceId, color, type,
 position}`, `GameOverEvent`). **What changed**: this bus finally has a real subscriber.
-`server/src/services/GameSession` constructs its own `EventBus`, passes it into its own
+`server/src/services/GameSession/GameSession` constructs its own `EventBus`, passes it into its own
 `GameEngine`, and subscribes a handler for all four event types (see "Server /
 persistence / networking layer" below) — this is the seam where "a game state change
 just happened" becomes "tell the network layer to broadcast something," with `EventBus`
@@ -772,7 +772,7 @@ What's still missing/rough:
   persistence-across-restart is planned yet.
 - No spectators, no resign/draw offers, no rooms beyond 1v1 — all deliberately out of
   scope for now. (ELO-style rating itself is implemented — see
-  `server/src/services/EloCalculator`/`RatingService` — this bullet is only about the
+  `server/src/services/Rating/EloCalculator`/`RatingService` — this bullet is only about the
   still-missing social/matchmaking features.)
 
 ## Testing
@@ -895,15 +895,16 @@ than inventing new ones.
 
 ### `server/` — persistence + matchmaking + game engine + WebSocket networking
 
-- `server/src/persistence/*` — the repository-pattern layer: `UserRecord` (plain row
+- `server/src/persistence/*` — the repository-pattern layer. `UserRecord` (plain row
   DTO), `IUserRepository` (the interface every consumer depends on: `createUser`/
-  `findByUsername`/`findById`/`setScore`), `UserRepositoryExceptions.h`
+  `findByUsername`/`findById`/`setScore`), and `UserRepositoryExceptions.h`
   (`DuplicateUsernameException`, thrown by `createUser` on a duplicate username --
-  backend-agnostic on purpose, so callers never need to catch a SQLite-specific type),
-  three implementations (`SqliteUserRepository`, `InMemoryUserRepository`,
-  `PostgresUserRepository`), and `RepositoryFactory::createUserRepository(RepositoryBackend,
-  sqliteDbPath, postgresConnectionString)` — the one place that knows every backend
-  exists and builds whichever one is asked for.
+  backend-agnostic on purpose, so callers never need to catch a SQLite-specific type)
+  live directly under `persistence/`, since every backend implements/throws against
+  them. Each concrete backend gets its own subfolder — `Sqlite/`, `InMemory/`,
+  `Postgres/` — and `Factory/` holds the one class that knows all three exist:
+  `RepositoryFactory::createUserRepository(RepositoryBackend, sqliteDbPath,
+  postgresConnectionString)` builds whichever backend is asked for.
   `IUserRepository` is deliberately ignorant of hashing: `createUser(username,
   passwordHash)` stores whatever credential string it's given (hashing is
   `AuthService`'s job, see below), and new users start at
@@ -912,28 +913,29 @@ than inventing new ones.
   (relative delta) is gone too, replaced by `setScore(userId, newScore)` (absolute --
   what an ELO update needs), called from `RatingService` (see below), which is in turn
   what every `GameSession`'s `GameOutcomeFn` closes over.
-  - `Database` (unchanged in content) is no longer constructed anywhere outside
-    `SqliteUserRepository.cpp` — `SqliteUserRepository` owns one internally (built from
-    the `dbPath` string passed to its constructor) instead of taking one by reference,
-    so it's the only class in the codebase that still includes `<SQLiteCpp/SQLiteCpp.h>`
-    or knows a `SQLite::Statement` exists.
-  - `InMemoryUserRepository` — a `std::unordered_map<int, UserRecord>` + its own
-    `std::mutex` (guards the map itself, since nothing else does for this
+  - `Sqlite/SqliteDatabase` (renamed from the old flat-folder `Database`, unchanged in
+    content) is no longer constructed anywhere outside `SqliteUserRepository.cpp` —
+    `SqliteUserRepository` owns one internally (built from the `dbPath` string passed
+    to its constructor) instead of taking one by reference, so it's the only class in
+    the codebase that still includes `<SQLiteCpp/SQLiteCpp.h>` or knows a
+    `SQLite::Statement` exists.
+  - `InMemory/InMemoryUserRepository` — a `std::unordered_map<int, UserRecord>` + its
+    own `std::mutex` (guards the map itself, since nothing else does for this
     implementation), no SQLite/file/network dependency at all. Exists both as a fast
     test double (see "Testing" above) and as concrete proof `IUserRepository` really
     decouples business logic from SQLite, not just in theory.
-  - `PostgresUserRepository` (Phase 1 of MIGRATION_PLAN.md) — implements the same
-    contract against `PostgresDatabase` (owns a `pqxx::connection` + schema, mirroring
-    `Database`'s role). Locks its own `std::mutex` around every method, unlike
-    `SqliteUserRepository` — a single `pqxx::connection` isn't safe for concurrent use
-    from multiple threads the way SQLiteCpp is. Both files' entire contents are guarded
-    by `#ifdef KUNGFUCHESS_HAS_POSTGRES`, only ever defined when `server/CMakeLists.txt`'s
-    `find_package(PostgreSQL QUIET)` actually finds libpq (always true in the Docker/Linux
-    build; optional on a native Windows configure, see "Build system" below) — a build
-    without it compiles both to empty translation units, and
-    `RepositoryFactory::createUserRepository` throws instead of failing to compile if
-    `RepositoryBackend::Postgres` is requested anyway.
-  - `RepositoryFactory` is the single call site (`server/main.cpp`) that decides
+  - `Postgres/PostgresUserRepository` (Phase 1 of MIGRATION_PLAN.md) — implements the
+    same contract against `PostgresDatabase` (owns a `pqxx::connection` + schema,
+    mirroring `SqliteDatabase`'s role). Locks its own `std::mutex` around every method,
+    unlike `SqliteUserRepository` — a single `pqxx::connection` isn't safe for
+    concurrent use from multiple threads the way SQLiteCpp is. Both files' entire
+    contents are guarded by `#ifdef KUNGFUCHESS_HAS_POSTGRES`, only ever defined when
+    `server/CMakeLists.txt`'s `find_package(PostgreSQL QUIET)` actually finds libpq
+    (always true in the Docker/Linux build; optional on a native Windows configure,
+    see "Build system" below) — a build without it compiles both to empty translation
+    units, and `RepositoryFactory::createUserRepository` throws instead of failing to
+    compile if `RepositoryBackend::Postgres` is requested anyway.
+  - `Factory/RepositoryFactory` is the single call site (`server/main.cpp`) that decides
     `RepositoryBackend::Sqlite` vs. `RepositoryBackend::InMemory` vs.
     `RepositoryBackend::Postgres` today — adding a fourth backend later means one new
     enum value plus one new `case` there, no changes to
@@ -953,7 +955,7 @@ than inventing new ones.
   always runs here regardless). Cost factor lives in
   `server/src/security/SecurityConfig.h` (`BCRYPT_COST_FACTOR`), not hardcoded inside
   `PasswordHasher.cpp`.
-- `server/src/services/AuthService` — thin, networking-agnostic wrapper around
+- `server/src/services/Auth/AuthService` — thin, networking-agnostic wrapper around
   `IUserRepository&` (never a concrete backend), its own mutex (multiple client
   connections can call in concurrently). Now also owns
   the one `PasswordHasher` used for both directions of credential handling:
@@ -982,7 +984,7 @@ than inventing new ones.
   `wallClockMillis()` (`common/WallClock.h`), never `nowMillis()` (`common/
   MonotonicClock.h`) -- see that header's comment for why steady_clock doesn't work
   once issuer and verifier are different processes.
-- `server/src/services/ConnectionRegistry` — mutex-guarded `connectionId ->
+- `server/src/services/Connection/ConnectionRegistry` — mutex-guarded `connectionId ->
   {userId, username, score}` (plus the reverse `userId -> connectionId`), populated
   only by `AuthRequestHandler` on a successful login (`register` never authenticates
   a connection). This is the identity binding every later request on that connection is
@@ -1000,7 +1002,7 @@ than inventing new ones.
   ports the original two `unordered_map`s verbatim; `RedisConnectionStore` is the
   alternative (keys `conn:{connectionId}` -> JSON, `user_conn:{userId}` ->
   connectionId), both behind `sw::redis::Redis&`.
-- `server/src/services/Matchmaker` — a queue of `{connectionId, userId, username, score,
+- `server/src/services/Matchmaking/Matchmaker` — a queue of `{connectionId, userId, username, score,
   enqueuedAtMs}` entries (the `Entry`/`Match` structs, hoisted to their own
   `MatchmakingTypes.h` in Phase 1b — `Matchmaker::Entry`/`Matchmaker::Match` still work
   everywhere via using-declarations). `tick(nowMs, onMatched, onTimedOut)` (called every
@@ -1025,7 +1027,7 @@ than inventing new ones.
   small addition: `Controller::pieceColorAt(Position) -> PieceColor` (`None` if empty/
   out of bounds), added specifically so `GameSession` can check piece ownership before
   ever calling `move()`/`jump()`.
-- `server/src/services/GameSession` — owns one `EventBus` + one `GameEngine` (built via
+- `server/src/services/GameSession/GameSession` — owns one `EventBus` + one `GameEngine` (built via
   `GameFactory::createNewGame`) + one `Controller`, **plus** its two participants:
   `Player{userId, username, connectionId}` for `white`/`black` (`connectionId` mutable —
   replaced on reconnect), a per-color `xDisconnectedAtMs` (0 = connected), and a
@@ -1064,7 +1066,7 @@ than inventing new ones.
     uses it as the one signal for "safe to drop this session."
   - Every public method still locks its own `std::mutex`, for the same reason as before
     (tick-loop thread + request-handling thread both touch the same `GameEngine`).
-- `server/src/services/GameSessionManager` — owns every active `GameSession` keyed by
+- `server/src/services/GameSession/GameSessionManager` — owns every active `GameSession` keyed by
   id (this map itself stays in-process only, unaffected by Phase 1b — see below), plus
   two reverse indexes (`connectionId -> sessionId`, `userId -> sessionId`) for O(1)
   lookup, all behind its own mutex. `getOrCreateDefaultSession` is gone —
@@ -1090,13 +1092,13 @@ than inventing new ones.
   (the exact keys created for that session) purely so `unbindSession` can clean up via
   `SMEMBERS`+`DEL` instead of a `SCAN`/`KEYS` over the whole keyspace; `LocalSessionIndexStore`
   doesn't need this since an in-memory linear scan is already cheap.
-- `server/src/services/EloCalculator` — **new**. Pure, stateless ELO math (no DB, no
+- `server/src/services/Rating/EloCalculator` — **new**. Pure, stateless ELO math (no DB, no
   networking, no locking): `applyResult(ratingWinner, ratingLoser) -> Outcome{
   newWinnerRating, newLoserRating}`, using the standard logistic expected-score curve
   and `common/Config/RatingConfig::K_FACTOR`. Deliberately separate from
   `RatingService` so the arithmetic itself stays trivially unit-testable without an
   `IUserRepository` in the loop.
-- `server/src/services/RatingService` — **new**. The single place that turns "who won"
+- `server/src/services/Rating/RatingService` — **new**. The single place that turns "who won"
   into "what changed in the DB": `applyGameResult(winnerUserId, loserUserId)` reads both
   users' current ratings via `IUserRepository::findById`, computes new ones via
   `EloCalculator`, and persists both via `IUserRepository::setScore`. This is what
@@ -1312,7 +1314,7 @@ both implemented now — see "Server / persistence / networking layer" above.)
 | Change what happens when a move completes (capture, promotion, game-over) | `server/src/game/Engine/GameEngine.cpp` (`executeMove`) |
 | Change click/selection UX (server-side REPL) | `server/src/game/Controller/Controller.cpp` (`click`) |
 | Change the direct from/to move command the network uses | `server/src/game/Controller/Controller.cpp` (`move`), `server/src/handlers/GameRequestHandler.cpp` |
-| Change who's allowed to move/jump which piece | `server/src/game/Controller/Controller.cpp` (`pieceColorAt`), `server/src/services/GameSession.cpp` (`requestMove`/`requestJump`); tests in `server/tests/game_session_test.cpp`, `server/tests/game_request_handler_test.cpp` |
+| Change who's allowed to move/jump which piece | `server/src/game/Controller/Controller.cpp` (`pieceColorAt`), `server/src/services/GameSession/GameSession.cpp` (`requestMove`/`requestJump`); tests in `server/tests/game_session_test.cpp`, `server/tests/game_request_handler_test.cpp` |
 | Change client-side click-to-select-then-move UX | `client/src/game/GameClient.cpp` (`handlePixelClick`) |
 | Parse/print board text (REPL only, not production setup) | `server/src/game/IO/BoardParser.cpp` / `BoardPrinter.cpp` |
 | Change the initial/starting board setup | `server/src/game/IO/GameFactory.cpp` (`createClassicBoard`) |
@@ -1322,21 +1324,21 @@ both implemented now — see "Server / persistence / networking layer" above.)
 | Fix/extend sprite rendering | `common/enums/PieceStateToString.h`, `client/src/ui/SpriteManager.cpp`, `client/src/ui/AnimationFrame.cpp` |
 | Change how pixel clicks map to board cells | `client/src/game/BoardMapper.cpp`, fed via `GameClient::handlePixelClick`/`handlePixelJump` |
 | Add/adjust server-side domain tests | `server/tests/game_tests/<matching-folder>/`, `server/tests/common_tests/` |
-| Add a new event / subscribe to a game event | `common/EventBus/Events.h` (new event struct), publisher call sites in `server/src/game/Engine/GameEngine.cpp`, subscriber wiring in `server/src/services/GameSession.cpp` (`subscribeToEvents`) |
-| Change the `users` table / user persistence | `server/src/persistence/Database.cpp` (SQLite schema), `server/src/persistence/SqliteUserRepository.cpp` (SQLite impl), `server/src/persistence/PostgresDatabase.cpp` (Postgres schema), `server/src/persistence/PostgresUserRepository.cpp` (Postgres impl), `server/src/persistence/InMemoryUserRepository.cpp` (in-memory impl); tests in `server/tests/sqlite_user_repository_test.cpp`/`postgres_user_repository_test.cpp`/`in_memory_user_repository_test.cpp` |
-| Add a new user-persistence backend | `server/src/persistence/IUserRepository.h` (implement the interface), `server/src/persistence/RepositoryFactory.cpp` (add a `RepositoryBackend` value + `case`) |
+| Add a new event / subscribe to a game event | `common/EventBus/Events.h` (new event struct), publisher call sites in `server/src/game/Engine/GameEngine.cpp`, subscriber wiring in `server/src/services/GameSession/GameSession.cpp` (`subscribeToEvents`) |
+| Change the `users` table / user persistence | `server/src/persistence/Sqlite/SqliteDatabase.cpp` (SQLite schema), `server/src/persistence/Sqlite/SqliteUserRepository.cpp` (SQLite impl), `server/src/persistence/Postgres/PostgresDatabase.cpp` (Postgres schema), `server/src/persistence/Postgres/PostgresUserRepository.cpp` (Postgres impl), `server/src/persistence/InMemory/InMemoryUserRepository.cpp` (in-memory impl); tests in `server/tests/sqlite_user_repository_test.cpp`/`postgres_user_repository_test.cpp`/`in_memory_user_repository_test.cpp` |
+| Add a new user-persistence backend | `server/src/persistence/IUserRepository.h` (implement the interface), `server/src/persistence/Factory/RepositoryFactory.cpp` (add a `RepositoryBackend` value + `case`) |
 | Switch which backend `KungFuChessServer`/`KungFuChessApiGateway` actually opens | `server/src/main.cpp`/`apigateway/src/main.cpp` (each currently `RepositoryBackend::Sqlite` unless `KUNGFUCHESS_POSTGRES_URL` is set — **must be set the same way on both, see Known gaps #19**) |
 | Change password hashing (cost factor, algorithm) | `server/src/security/SecurityConfig.h`, `server/src/security/PasswordHasher.cpp`; tests in `server/tests/password_hasher_test.cpp` |
-| Change register/login business logic (not the DB rows) | `server/src/services/AuthService.cpp` (called only from `apigateway/src/ApiGatewayRequestHandler.cpp` now — **Phase 2**, `server/`'s own `AuthRequestHandler` never calls it); tests in `server/tests/auth_service_test.cpp`, `apigateway/tests/api_gateway_request_handler_test.cpp` |
+| Change register/login business logic (not the DB rows) | `server/src/services/Auth/AuthService.cpp` (called only from `apigateway/src/ApiGatewayRequestHandler.cpp` now — **Phase 2**, `server/`'s own `AuthRequestHandler` never calls it); tests in `server/tests/auth_service_test.cpp`, `apigateway/tests/api_gateway_request_handler_test.cpp` |
 | Add/change a REST endpoint on the API Gateway | `apigateway/src/ApiGatewayRequestHandler.cpp` (request parsing/business logic, testable without HTTP), `apigateway/src/network/ApiGatewayServer.cpp` (path/method routing) |
 | Change how a login token is issued/verified, its TTL, or its signing secret | `common/Security/TokenService.cpp` (issue/verify logic), `common/Security/Sha256.cpp` (the HMAC primitive), `common/Config/TokenConfig.h` (TTL, dev-default secret), `server/src/main.cpp`/`apigateway/src/main.cpp` (`KUNGFUCHESS_TOKEN_SECRET` env wiring — **must match on both, see Known gaps #18**); tests in `server/tests/common_tests/token_service_test.cpp` |
-| Change game-session hosting, tick behavior, or session lookup | `server/src/services/GameSession.cpp`/`GameSessionManager.cpp`; tests in `server/tests/game_session_test.cpp` |
-| Change matchmaking pairing rules, wait timeout, or score range | `common/Config/MatchmakingConfig.h`, `server/src/services/Matchmaker.cpp`; tests in `server/tests/matchmaker_test.cpp` |
-| Change connection-identity/matchmaking-queue/session-index storage, or add a new backend for one | `server/src/services/IConnectionStore.h`/`IMatchQueueStore.h`/`ISessionIndexStore.h` (implement the interface), their `Local*`/`Redis*` implementations; tests in `server/tests/local_connection_store_test.cpp`/`redis_connection_store_test.cpp`/`redis_match_queue_store_test.cpp`/`redis_session_index_store_test.cpp` |
+| Change game-session hosting, tick behavior, or session lookup | `server/src/services/GameSession/GameSession.cpp`/`GameSessionManager.cpp`; tests in `server/tests/game_session_test.cpp` |
+| Change matchmaking pairing rules, wait timeout, or score range | `common/Config/MatchmakingConfig.h`, `server/src/services/Matchmaking/Matchmaker.cpp`; tests in `server/tests/matchmaker_test.cpp` |
+| Change connection-identity/matchmaking-queue/session-index storage, or add a new backend for one | `server/src/services/Connection/IConnectionStore.h`/`Matchmaking/IMatchQueueStore.h`/`SessionIndex/ISessionIndexStore.h` (implement the interface), their `Local*`/`Redis*` implementations; tests in `server/tests/local_connection_store_test.cpp`/`redis_connection_store_test.cpp`/`redis_match_queue_store_test.cpp`/`redis_session_index_store_test.cpp` |
 | Switch `ConnectionRegistry`/`Matchmaker`/`GameSessionManager` to Redis-backed storage | `server/src/main.cpp` (currently local/in-memory unless `KUNGFUCHESS_REDIS_URL` is set) |
-| Change disconnect-grace duration | `common/Config/MatchmakingConfig.h`, `server/src/services/GameSession.cpp` (`tick`, `forfeitTo`) |
-| Change ELO rating math (K-factor, starting rating) or how a game outcome is persisted | `common/Config/RatingConfig.h`, `server/src/services/EloCalculator.cpp` (math), `server/src/services/RatingService.cpp` (persistence); tests in `server/tests/elo_calculator_test.cpp`/`rating_service_test.cpp` |
-| Change reconnect detection/resume behavior | `server/src/handlers/AuthRequestHandler.cpp` (`completeLogin`, called from the `login_token` branch), `server/src/services/GameSessionManager.cpp` (`rebindConnection`), `server/src/services/GameSession.cpp` (`markReconnected`, `resumeInfoFor`) |
+| Change disconnect-grace duration | `common/Config/MatchmakingConfig.h`, `server/src/services/GameSession/GameSession.cpp` (`tick`, `forfeitTo`) |
+| Change ELO rating math (K-factor, starting rating) or how a game outcome is persisted | `common/Config/RatingConfig.h`, `server/src/services/Rating/EloCalculator.cpp` (math), `server/src/services/Rating/RatingService.cpp` (persistence); tests in `server/tests/elo_calculator_test.cpp`/`rating_service_test.cpp` |
+| Change reconnect detection/resume behavior | `server/src/handlers/AuthRequestHandler.cpp` (`completeLogin`, called from the `login_token` branch), `server/src/services/GameSession/GameSessionManager.cpp` (`rebindConnection`), `server/src/services/GameSession/GameSession.cpp` (`markReconnected`, `resumeInfoFor`) |
 | Change the auth/matchmaking/game/CLI/GUI hand-off order on the client | `client/src/main.cpp` |
 | Change the REST `register`/`login` calls the client makes, or add a new API Gateway endpoint client-side | `client/src/network/ApiGatewayClient.cpp`, `client/src/cli/CliShell.cpp` |
 | Change the JSON wire format for a message | `protocol/include/protocol/Message.h` (field names, `toJson`/`fromJson`), `protocol/include/protocol/MessageType.h` (the `"type"` string); round-trip tests in `protocol/tests/message_test.cpp` |

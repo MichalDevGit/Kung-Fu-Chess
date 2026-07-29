@@ -7,8 +7,8 @@
 #include <unordered_map>
 
 #include "GameSession.h"
-#include "ISessionIndexStore.h"
-#include "RatingService.h"
+#include "../SessionIndex/ISessionIndexStore.h"
+#include "../Rating/RatingService.h"
 
 class IUserRepository;
 

@@ -5,9 +5,9 @@
 
 #include "protocol/Message.h"
 #include "protocol/MessageType.h"
-#include "services/ConnectionRegistry.h"
-#include "services/GameSessionManager.h"
-#include "services/Matchmaker.h"
+#include "services/Connection/ConnectionRegistry.h"
+#include "services/GameSession/GameSessionManager.h"
+#include "services/Matchmaking/Matchmaker.h"
 #include "common/MonotonicClock.h"
 
 MatchmakingRequestHandler::MatchmakingRequestHandler(

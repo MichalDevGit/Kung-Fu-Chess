@@ -1,7 +1,7 @@
 // Requires a real, reachable Redis -- see redis_connection_store_test.cpp
 // for why this isn't behind a compile-time macro.
 #include "tests/doctest.h"
-#include "services/RedisSessionIndexStore.h"
+#include "services/SessionIndex/RedisSessionIndexStore.h"
 
 #include <cstdlib>
 #include <sw/redis++/redis++.h>

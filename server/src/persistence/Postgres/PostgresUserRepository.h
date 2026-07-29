@@ -9,7 +9,7 @@
 #include <mutex>
 #include <string>
 
-#include "IUserRepository.h"
+#include "../IUserRepository.h"
 #include "PostgresDatabase.h"
 
 // Postgres-backed IUserRepository. Owns its own PostgresDatabase connection

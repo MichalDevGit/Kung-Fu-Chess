@@ -33,7 +33,7 @@ namespace protocol
 
         // Matchmaking messages. FindGame is sent by the client immediately
         // after a successful login; the outcome (MatchFound/NoMatch) is a
-        // later, unsolicited push -- see server/src/services/Matchmaker.
+        // later, unsolicited push -- see server/src/services/Matchmaking/Matchmaker.
         inline constexpr const char* FindGame = "find_game";
         inline constexpr const char* Searching = "searching";
         inline constexpr const char* MatchFound = "match_found";

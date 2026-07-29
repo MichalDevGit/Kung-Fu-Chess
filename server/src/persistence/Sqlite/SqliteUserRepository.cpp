@@ -2,8 +2,8 @@
 
 #include <SQLiteCpp/SQLiteCpp.h>
 
-#include "UserRepositoryExceptions.h"
-#include "../../../common/Config/RatingConfig.h"
+#include "../UserRepositoryExceptions.h"
+#include "../../../../common/Config/RatingConfig.h"
 
 namespace
 {

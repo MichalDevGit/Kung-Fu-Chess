@@ -1,6 +1,6 @@
 #include "tests/doctest.h"
 
-#include "services/EloCalculator.h"
+#include "services/Rating/EloCalculator.h"
 
 TEST_CASE("Testing EloCalculator")
 {

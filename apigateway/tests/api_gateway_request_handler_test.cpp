@@ -4,9 +4,9 @@
 
 #include "ApiGatewayRequestHandler.h"
 #include "common/Security/TokenService.h"
-#include "persistence/InMemoryUserRepository.h"
+#include "persistence/InMemory/InMemoryUserRepository.h"
 #include "protocol/Message.h"
-#include "services/AuthService.h"
+#include "services/Auth/AuthService.h"
 
 TEST_CASE("Testing ApiGatewayRequestHandler")
 {
