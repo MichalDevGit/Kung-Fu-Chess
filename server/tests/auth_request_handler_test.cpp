@@ -8,6 +8,7 @@
 #include "common/WallClock.h"
 #include "persistence/InMemory/InMemoryUserRepository.h"
 #include "services/Connection/ConnectionRegistry.h"
+#include "services/GameNodeBridge/LocalReconnectResolver.h"
 #include "services/GameSession/GameSessionManager.h"
 #include "services/Connection/LocalConnectionStore.h"
 #include "services/SessionIndex/LocalSessionIndexStore.h"
@@ -22,8 +23,9 @@ struct Fixture
     ConnectionRegistry connectionRegistry{connectionStore};
     LocalSessionIndexStore sessionIndexStore;
     GameSessionManager sessionManager{[](const std::string&, const std::string&) {}, repo, sessionIndexStore};
+    LocalReconnectResolver reconnectResolver{sessionManager};
     AuthRequestHandler handler{
-        repo, tokenService, connectionRegistry, sessionManager, [](const std::string&, const std::string&) {}};
+        repo, tokenService, connectionRegistry, reconnectResolver, [](const std::string&, const std::string&) {}};
 };
 }
 

@@ -1,6 +1,7 @@
 # Containerizes today's server-side processes exactly as they run outside
-# Docker -- see MIGRATION_PLAN.md Phase 0 (this file) and Phase 2 (the
-# apigateway addition below).
+# Docker -- see MIGRATION_PLAN.md Phase 0 (this file), Phase 2 (the
+# apigateway addition), and Phase 3 (the gamenode addition, and the
+# server-target rename from KungFuChessServer to KungFuChessWsGateway).
 #
 # Only server-side executables are built here: client/ links the vendored
 # Windows/MSVC OpenCV binaries under lib/ (see ARCHITECTURE.md "Build
@@ -13,10 +14,11 @@
 # PostgresUserRepository is only compiled in where find_package(PostgreSQL)
 # succeeds (see server/CMakeLists.txt) -- this is the one place that's always
 # true, so this image is what makes the Postgres backend real. As of Phase 2,
-# Postgres is no longer merely "reachable but unused": once KungFuChessServer
-# and KungFuChessApiGateway are separate containers, they must be pointed at
-# the SAME user store or they'd silently diverge (see docker-compose.yml,
-# which sets the same KUNGFUCHESS_POSTGRES_URL on both services).
+# Postgres is no longer merely "reachable but unused": once KungFuChessWsGateway,
+# KungFuChessGameNode, and KungFuChessApiGateway are separate containers, they
+# must be pointed at the SAME user store or they'd silently diverge (see
+# docker-compose.yml, which sets the same KUNGFUCHESS_POSTGRES_URL on all
+# three services).
 
 # ---- Build stage (shared by both runtime images below) ----
 FROM ubuntu:22.04 AS build
@@ -40,15 +42,18 @@ COPY common ./common
 COPY protocol ./protocol
 COPY server ./server
 COPY apigateway ./apigateway
+COPY gamenode ./gamenode
 
 # FetchContent (ixwebsocket/nlohmann_json/SQLiteCpp/bcrypt/hiredis/
 # redis-plus-plus) needs network access at configure time, same as a local
 # dev build -- nothing here is vendored differently for Docker.
 RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_CLIENT=OFF \
-    && cmake --build build --target KungFuChessServer KungFuChessApiGateway --parallel
+    && cmake --build build --target KungFuChessWsGateway KungFuChessApiGateway KungFuChessGameNode --parallel
 
-# ---- Runtime stage: KungFuChessServer (the WebSocket game process) ----
-FROM ubuntu:22.04 AS runtime-server
+# ---- Runtime stage: KungFuChessWsGateway (the WebSocket-holding relay --
+# MIGRATION_PLAN.md Phase 3 renamed this from KungFuChessServer once
+# GameSessionManager/Matchmaker moved out to KungFuChessGameNode below) ----
+FROM ubuntu:22.04 AS runtime-wsgateway
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -57,7 +62,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=build /src/build/server/KungFuChessServer ./KungFuChessServer
+COPY --from=build /src/build/server/KungFuChessWsGateway ./KungFuChessWsGateway
 
 # Accept connections from outside the container (the default "127.0.0.1"
 # bind would only accept connections from inside the container itself,
@@ -78,7 +83,35 @@ EXPOSE 9002 9003
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://127.0.0.1:9003/health || exit 1
 
-ENTRYPOINT ["/app/KungFuChessServer"]
+ENTRYPOINT ["/app/KungFuChessWsGateway"]
+
+# ---- Runtime stage: KungFuChessGameNode (MIGRATION_PLAN.md Phase 3 -- owns
+# GameSessionManager/Matchmaker/GameSession's tick loop, split off from
+# KungFuChessServer; talks to KungFuChessWsGateway exclusively over Redis
+# pub/sub, see server/src/services/GameNodeBridge/) ----
+FROM ubuntu:22.04 AS runtime-gamenode
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=build /src/build/gamenode/KungFuChessGameNode ./KungFuChessGameNode
+
+ENV KUNGFUCHESS_HOST=0.0.0.0
+
+RUN mkdir -p /app/data
+VOLUME ["/app/data"]
+WORKDIR /app/data
+
+EXPOSE 9005
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://127.0.0.1:9005/health || exit 1
+
+ENTRYPOINT ["/app/KungFuChessGameNode"]
 
 # ---- Runtime stage: KungFuChessApiGateway (MIGRATION_PLAN.md Phase 2) ----
 FROM ubuntu:22.04 AS runtime-apigateway

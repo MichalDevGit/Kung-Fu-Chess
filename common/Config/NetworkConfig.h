@@ -22,6 +22,12 @@ namespace NetworkConfig
     // different message type on the same connection.
     constexpr const char* API_GATEWAY_HOST = "127.0.0.1";
     constexpr int API_GATEWAY_PORT = 9004;
+
+    // Game Node's own liveness probe (MIGRATION_PLAN.md Phase 3) -- a
+    // separate process from the WebSocket Gateway now, so it needs its own
+    // health-check port; it has no client-facing port of its own otherwise
+    // (all client traffic still enters through the Gateway's DEFAULT_PORT).
+    constexpr int GAME_NODE_HEALTH_CHECK_PORT = 9005;
 }
 
 #endif

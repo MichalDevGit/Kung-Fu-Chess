@@ -53,6 +53,13 @@ add_subdirectory(server)
 # builds unconditionally, including in the server-only Docker/Linux build.
 add_subdirectory(apigateway)
 
+# ---- Game Node (MIGRATION_PLAN.md Phase 3: GameSessionManager/Matchmaker/
+# GameSession's tick loop as their own deployable process, split off from
+# what used to be KungFuChessServer -- see gamenode/CMakeLists.txt) ----
+# Must come after server/ -- links KungFuChessNetwork/KungFuChessCommon,
+# which server/'s CMakeLists.txt defines. No OpenCV dependency either.
+add_subdirectory(gamenode)
+
 # ---- CLI client (standalone executable, talks to the server over ws://) ----
 # Off by default when building only the server (e.g. the Docker image, or any
 # Linux build): client/ links the vendored OpenCV binaries under lib/, which

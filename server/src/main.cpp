@@ -1,61 +1,50 @@
-// KungFuChess server entry point: opens the SQLite-backed user database,
-// wires it through AuthRequestHandler (login_token verification only --
-// register/password login now live in the separate apigateway/ process, see
-// MIGRATION_PLAN.md Phase 2), ConnectionRegistry/Matchmaker/
-// MatchmakingRequestHandler for pairing authenticated connections into
-// matches, and GameSessionManager/GameRequestHandler for game commands, all
-// dispatched from one WebSocket handler; also runs the server-owned tick
-// loop that advances every active GameSession's real-time clock and scans
-// the matchmaking queue, independent of whether any client happens to be
-// connected right now.
+// WebSocket Gateway entry point (MIGRATION_PLAN.md Phase 3 -- this
+// executable was KungFuChessServer before this phase, and ran the whole game
+// backend in one process; see ARCHITECTURE.md for the full before/after).
+// Now a thin relay: it still verifies a login_token (AuthRequestHandler,
+// unchanged) and still holds every client's WebSocket connection
+// (WebSocketServer, unchanged), but GameSessionManager/Matchmaker/
+// GameSession's tick loop have all moved into their own process (gamenode/,
+// see gamenode/src/main.cpp) -- this process forwards find_game/move/jump to
+// it over Redis pub/sub (GameNodeRequestPublisher/RemoteGameNodeHandler) and
+// relays its async replies/pushes back down the right connection
+// (GameNodePushRouter -> WebSocketServer::sendTo), instead of calling
+// GameSessionManager/Matchmaker in-process the way the monolith used to.
 #include <chrono>
 #include <cstdlib>
 #include <memory>
 #include <optional>
-#include <thread>
 
 #include <nlohmann/json.hpp>
 #include <sw/redis++/redis++.h>
 
 #include "handlers/AuthRequestHandler.h"
-#include "handlers/GameRequestHandler.h"
-#include "handlers/MatchmakingRequestHandler.h"
 #include "network/HealthCheckServer.h"
 #include "network/WebSocketServer.h"
 #include "persistence/IUserRepository.h"
 #include "persistence/Factory/RepositoryFactory.h"
 #include "services/Connection/ConnectionRegistry.h"
-#include "services/GameSession/GameSessionManager.h"
-#include "services/Connection/IConnectionStore.h"
-#include "services/Matchmaking/IMatchQueueStore.h"
-#include "services/SessionIndex/ISessionIndexStore.h"
-#include "services/Connection/LocalConnectionStore.h"
-#include "services/Matchmaking/LocalMatchQueueStore.h"
-#include "services/SessionIndex/LocalSessionIndexStore.h"
-#include "services/Matchmaking/Matchmaker.h"
 #include "services/Connection/RedisConnectionStore.h"
-#include "services/Matchmaking/RedisMatchQueueStore.h"
-#include "services/SessionIndex/RedisSessionIndexStore.h"
+#include "services/GameNodeBridge/GameNodePushRouter.h"
+#include "services/GameNodeBridge/GameNodeRequestPublisher.h"
+#include "services/GameNodeBridge/RemoteGameNodeHandler.h"
+#include "services/GameNodeBridge/RemoteReconnectResolver.h"
 #include "protocol/Message.h"
 #include "protocol/MessageType.h"
 #include "common/Config/NetworkConfig.h"
-#include "common/Config/TimingConfig.h"
 #include "common/Config/TokenConfig.h"
 #include "common/Logging/Logger.h"
-#include "common/MonotonicClock.h"
 #include "common/Security/TokenService.h"
-#include "common/enums/PieceColor.h"
 
 namespace
 {
-// Tries the auth handler first, then matchmaking, and only falls back to the
-// game handler when neither recognizes the message type. Each handler stays
-// ignorant of the others' message-type sets -- adding a new type to any one
-// of them never requires touching this dispatch.
+// Tries the auth handler first; anything it doesn't recognize (find_game/
+// move/jump, or anything else) is simply forwarded to the Game Node --
+// classifying "is this matchmaking or a game command" is that process's job
+// now (see GameNodeRequestRouter::dispatchClientMessage), not this one's.
 std::string dispatch(
     AuthRequestHandler& authHandler,
-    MatchmakingRequestHandler& matchmakingHandler,
-    GameRequestHandler& gameHandler,
+    RemoteGameNodeHandler& gameNodeHandler,
     const std::string& connectionId,
     const std::string& requestJson)
 {
@@ -70,49 +59,7 @@ std::string dispatch(
     if (!isUnknownType(authResponse))
         return authResponse;
 
-    const std::string matchmakingResponse = matchmakingHandler.handle(connectionId, requestJson);
-    if (!isUnknownType(matchmakingResponse))
-        return matchmakingResponse;
-
-    return gameHandler.handle(connectionId, requestJson);
-}
-
-// Runs forever on its own thread: advances every active GameSession's clock
-// on a fixed interval (replaces the old GameLoop-driven wall-clock
-// controller.wait(deltaMs) call, since the authoritative clock must advance
-// even when no client is connected/rendering) and scans the matchmaking
-// queue on the same cadence.
-void runTickLoop(GameSessionManager& sessionManager, Matchmaker& matchmaker, WebSocketServer& server)
-{
-    while (true)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(TimingConfig::SERVER_TICK_INTERVAL_MILLIS));
-        sessionManager.tickAll(TimingConfig::SERVER_TICK_INTERVAL_MILLIS);
-
-        matchmaker.tick(
-            nowMillis(),
-            [&](const Matchmaker::Match& match)
-            {
-                // match.first is always the earlier-enqueued of the pair
-                // (see Matchmaker::tick) -- White = entered first.
-                GameSession::Player white{match.first.userId, match.first.username, match.first.connectionId};
-                GameSession::Player black{match.second.userId, match.second.username, match.second.connectionId};
-
-                GameSession& session = sessionManager.createSession(white, black);
-
-                server.sendTo(
-                    match.first.connectionId,
-                    protocol::MatchFoundResult{session.getId(), PieceColor::White, match.second.username, session.getGameView()}.toJson());
-
-                server.sendTo(
-                    match.second.connectionId,
-                    protocol::MatchFoundResult{session.getId(), PieceColor::Black, match.first.username, session.getGameView()}.toJson());
-            },
-            [&](const Matchmaker::Entry& entry)
-            {
-                server.sendTo(entry.connectionId, protocol::NoMatchResult{}.toJson());
-            });
-    }
+    return gameNodeHandler.handle(connectionId, requestJson);
 }
 }
 
@@ -127,10 +74,8 @@ int main()
     const std::string bindHost = hostOverride ? std::string(hostOverride) : NetworkConfig::DEFAULT_HOST;
 
     // KUNGFUCHESS_POSTGRES_URL is an explicit opt-in only (unset everywhere
-    // today) -- SQLite remains the actual default per MIGRATION_PLAN.md
-    // Phase 1 ("keep SQLite as the default backend until Postgres is
-    // verified in a staging run"). Setting it lets a staging deployment
-    // exercise PostgresUserRepository with zero other code changes.
+    // today) -- SQLite remains the actual default. AuthRequestHandler only
+    // ever reads a user by id here (never writes), same as before this phase.
     const std::string dbPath = "kungfuchess.db";
     const char* postgresUrl = std::getenv("KUNGFUCHESS_POSTGRES_URL");
     std::unique_ptr<IUserRepository> users = postgresUrl
@@ -146,75 +91,63 @@ int main()
         tokenSecretEnv ? std::string(tokenSecretEnv) : TokenConfig::DEV_INSECURE_DEFAULT_SECRET;
     security::TokenService tokenService(tokenSecret);
 
-    // KUNGFUCHESS_REDIS_URL is an explicit opt-in only (unset everywhere
-    // today) -- local/in-memory storage remains the actual default per
-    // MIGRATION_PLAN.md Phase 1 ("still passes today's tests unchanged").
-    // Setting it opts ConnectionRegistry/Matchmaker/GameSessionManager's
-    // lookup indexes into Redis all at once, sharing one connection;
-    // GameSessionManager's own `sessions` map of live GameSession objects
-    // stays in-process only either way.
+    // Mandatory as of MIGRATION_PLAN.md Phase 3 (previously an opt-in
+    // KUNGFUCHESS_REDIS_URL, back when ConnectionRegistry/Matchmaker/
+    // GameSessionManager all lived in this same process and a local/
+    // in-memory store was a legitimate default). Now that GameSessionManager/
+    // Matchmaker live in gamenode/'s own process, this Gateway's
+    // ConnectionRegistry MUST be the same Redis-backed store gamenode/ reads
+    // -- a local/in-memory ConnectionRegistry here would be invisible to
+    // MatchmakingRequestHandler's connectionRegistry.find() call over there,
+    // breaking find_game outright. See gamenode/src/main.cpp's file comment
+    // for the same requirement on that side.
     const char* redisUrl = std::getenv("KUNGFUCHESS_REDIS_URL");
-    std::optional<sw::redis::Redis> redis;
-    if (redisUrl)
-        redis.emplace(redisUrl);
+    if (redisUrl == nullptr)
+    {
+        common::Logger::error(
+            "KUNGFUCHESS_REDIS_URL is required for KungFuChessWsGateway (MIGRATION_PLAN.md Phase 3) -- "
+            "it must point at the same Redis the Game Node uses.");
+        return 1;
+    }
+    sw::redis::Redis redis(redisUrl);
 
-    std::unique_ptr<IConnectionStore> connectionStore = redisUrl
-        ? std::unique_ptr<IConnectionStore>(std::make_unique<RedisConnectionStore>(*redis))
-        : std::unique_ptr<IConnectionStore>(std::make_unique<LocalConnectionStore>());
-    std::unique_ptr<IMatchQueueStore> matchQueueStore = redisUrl
-        ? std::unique_ptr<IMatchQueueStore>(std::make_unique<RedisMatchQueueStore>(*redis))
-        : std::unique_ptr<IMatchQueueStore>(std::make_unique<LocalMatchQueueStore>());
-    std::unique_ptr<ISessionIndexStore> sessionIndexStore = redisUrl
-        ? std::unique_ptr<ISessionIndexStore>(std::make_unique<RedisSessionIndexStore>(*redis))
-        : std::unique_ptr<ISessionIndexStore>(std::make_unique<LocalSessionIndexStore>());
+    RedisConnectionStore connectionStore(redis);
+    ConnectionRegistry connectionRegistry(connectionStore);
 
-    ConnectionRegistry connectionRegistry(*connectionStore);
-    Matchmaker matchmaker(*matchQueueStore);
+    GameNodeRequestPublisher requestPublisher(redis);
 
-    // Constructed before GameSessionManager/AuthRequestHandler (and without
-    // a request handler yet -- see setRequestHandler below) specifically so
-    // the sendTo lambdas passed to them can capture a real, already-existing
-    // server to push through, instead of the console-log stub this used to be.
+    // Constructed before WebSocketServer specifically so its default push
+    // handler can capture a real, already-existing server to sendTo through,
+    // same deferred-registration reasoning server/main.cpp always used for
+    // GameSessionManager's SendToFn before this phase.
     WebSocketServer server(NetworkConfig::DEFAULT_PORT, bindHost);
     HealthCheckServer healthCheckServer(NetworkConfig::HEALTH_CHECK_PORT, bindHost);
 
-    GameSessionManager sessionManager(
-        [&server](const std::string& connectionId, const std::string& json)
-        {
-            server.sendTo(connectionId, json);
-        },
-        *users,
-        *sessionIndexStore);
+    GameNodePushRouter pushRouter(
+        redis,
+        [&server](const std::string& connectionId, const std::string& json) { server.sendTo(connectionId, json); });
+    pushRouter.start();
 
-    // Needs sessionManager (to detect/resume a reconnecting player's
-    // existing session on login -- see the class comment) and a way to push
-    // that resume independent of login's own synchronous reply.
+    RemoteReconnectResolver reconnectResolver(pushRouter, requestPublisher);
+
     AuthRequestHandler authHandler(
         *users,
         tokenService,
         connectionRegistry,
-        sessionManager,
-        [&server](const std::string& connectionId, const std::string& json)
-        {
-            server.sendTo(connectionId, json);
-        });
+        reconnectResolver,
+        [&server](const std::string& connectionId, const std::string& json) { server.sendTo(connectionId, json); });
 
-    MatchmakingRequestHandler matchmakingHandler(connectionRegistry, matchmaker, sessionManager);
-    GameRequestHandler gameHandler(sessionManager);
-
-    std::thread tickThread(runTickLoop, std::ref(sessionManager), std::ref(matchmaker), std::ref(server));
-    tickThread.detach();
+    RemoteGameNodeHandler gameNodeHandler(requestPublisher);
 
     server.setRequestHandler(
-        [&authHandler, &matchmakingHandler, &gameHandler](const std::string& connectionId, const std::string& requestJson)
-        { return dispatch(authHandler, matchmakingHandler, gameHandler, connectionId, requestJson); });
+        [&authHandler, &gameNodeHandler](const std::string& connectionId, const std::string& requestJson)
+        { return dispatch(authHandler, gameNodeHandler, connectionId, requestJson); });
 
     server.setCloseHandler(
-        [&connectionRegistry, &matchmaker, &sessionManager](const std::string& connectionId)
+        [&connectionRegistry, &requestPublisher](const std::string& connectionId)
         {
             connectionRegistry.onDisconnected(connectionId);
-            matchmaker.removeByConnection(connectionId);
-            sessionManager.onConnectionClosed(connectionId);
+            requestPublisher.notifyConnectionClosed(connectionId);
         });
 
     healthCheckServer.start();
@@ -223,7 +156,7 @@ int main()
 
     server.start();
     common::Logger::info(
-        "KungFuChess server listening on ws://" + bindHost + ":" + std::to_string(NetworkConfig::DEFAULT_PORT));
+        "KungFuChess WebSocket Gateway listening on ws://" + bindHost + ":" + std::to_string(NetworkConfig::DEFAULT_PORT));
     server.wait();
 
     return 0;

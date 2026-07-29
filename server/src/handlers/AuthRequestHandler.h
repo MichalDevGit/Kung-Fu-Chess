@@ -5,7 +5,7 @@
 #include <string>
 
 class ConnectionRegistry;
-class GameSessionManager;
+class IReconnectResolver;
 class IUserRepository;
 namespace security
 {
@@ -42,6 +42,13 @@ namespace security
 // always auto-send find_game right after login (see client/src/main.cpp):
 // by the time that request arrives, a returning player is already back in
 // their game, not queued for a new one.
+//
+// MIGRATION_PLAN.md Phase 3: that reconnect check is behind IReconnectResolver
+// now, not a direct GameSessionManager& -- GameSessionManager moved into its
+// own process (gamenode/) in this phase, so the WebSocket Gateway (where this
+// class still lives) can only ask the question over the network
+// (RemoteReconnectResolver). LocalReconnectResolver (a direct in-process
+// call) is what tests -- and gamenode/'s own request router -- use instead.
 class AuthRequestHandler
 {
 public:
@@ -51,7 +58,7 @@ public:
         IUserRepository& users,
         security::TokenService& tokenService,
         ConnectionRegistry& connectionRegistry,
-        GameSessionManager& sessionManager,
+        IReconnectResolver& reconnectResolver,
         SendFn sendResume);
 
     // Never throws -- any parse/validation failure is caught internally and
@@ -62,7 +69,7 @@ private:
     IUserRepository& users;
     security::TokenService& tokenService;
     ConnectionRegistry& connectionRegistry;
-    GameSessionManager& sessionManager;
+    IReconnectResolver& reconnectResolver;
     SendFn sendResume;
 
     // Binds the connection's identity and resumes an existing session if

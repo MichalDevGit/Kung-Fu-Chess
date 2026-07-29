@@ -220,13 +220,15 @@ target_link_libraries(KungFuChessGameSession PUBLIC KungFuChessGame KungFuChessP
 file(GLOB NETWORK_SOURCES "src/handlers/*.cpp" "src/network/*.cpp"
     "src/services/Connection/ConnectionRegistry.cpp" "src/services/Matchmaking/Matchmaker.cpp"
     "src/services/Connection/LocalConnectionStore.cpp" "src/services/Connection/RedisConnectionStore.cpp"
-    "src/services/Matchmaking/LocalMatchQueueStore.cpp" "src/services/Matchmaking/RedisMatchQueueStore.cpp")
+    "src/services/Matchmaking/LocalMatchQueueStore.cpp" "src/services/Matchmaking/RedisMatchQueueStore.cpp"
+    "src/services/GameNodeBridge/*.cpp")
 file(GLOB NETWORK_HEADERS "src/handlers/*.h" "src/network/*.h"
     "src/services/Connection/ConnectionRegistry.h" "src/services/Matchmaking/Matchmaker.h"
     "src/services/Connection/AuthenticatedUser.h" "src/services/Connection/IConnectionStore.h"
     "src/services/Connection/LocalConnectionStore.h" "src/services/Connection/RedisConnectionStore.h"
     "src/services/Matchmaking/MatchmakingTypes.h" "src/services/Matchmaking/IMatchQueueStore.h"
-    "src/services/Matchmaking/LocalMatchQueueStore.h" "src/services/Matchmaking/RedisMatchQueueStore.h")
+    "src/services/Matchmaking/LocalMatchQueueStore.h" "src/services/Matchmaking/RedisMatchQueueStore.h"
+    "src/services/GameNodeBridge/*.h")
 
 add_library(KungFuChessNetwork STATIC ${NETWORK_SOURCES} ${NETWORK_HEADERS})
 target_include_directories(KungFuChessNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -245,6 +247,9 @@ target_include_directories(KungFuChessPersistence_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(KungFuChessPersistence_tests PRIVATE KungFuChessPersistence KungFuChessAuth KungFuChessGame KungFuChessGameSession KungFuChessNetwork)
 
-# ---- Server executable (serves auth over ws://127.0.0.1:9002) ----
-add_executable(KungFuChessServer src/main.cpp)
-target_link_libraries(KungFuChessServer PRIVATE KungFuChessNetwork KungFuChessCommon)
+# ---- WebSocket Gateway executable (MIGRATION_PLAN.md Phase 3: renamed from
+# KungFuChessServer -- this process no longer runs any game logic at all, it
+# just holds connections and relays to/from the Game Node over Redis, see
+# gamenode/) ----
+add_executable(KungFuChessWsGateway src/main.cpp)
+target_link_libraries(KungFuChessWsGateway PRIVATE KungFuChessNetwork KungFuChessCommon)

@@ -5,26 +5,39 @@
 # KUNGFUCHESS_POSTGRES_URL/KUNGFUCHESS_REDIS_URL.
 #
 # Phase 2 (splitting off the API Gateway) is the point where Postgres stops
-# being merely "reachable but unused": `server` and `apigateway` below are
+# being merely "reachable but unused": `wsgateway` and `apigateway` below are
 # now two separate containers that both read/write the `users` table, so
 # KUNGFUCHESS_POSTGRES_URL is set on BOTH here, pointing at the same
 # `postgres` service -- leaving either one on its own default SQLite file
 # would let the two processes silently diverge on who's registered (see
 # ARCHITECTURE.md's Known gaps). Both also share the same
-# KUNGFUCHESS_TOKEN_SECRET, since apigateway issues login tokens and server
-# only verifies them -- they must agree on the signing secret.
+# KUNGFUCHESS_TOKEN_SECRET, since apigateway issues login tokens and
+# wsgateway only verifies them -- they must agree on the signing secret.
 x-kungfuchess-shared-env: &kungfuchess-shared-env
   KUNGFUCHESS_POSTGRES_URL: postgresql://kungfuchess:kungfuchess@postgres:5432/kungfuchess
   KUNGFUCHESS_TOKEN_SECRET: change-me-to-a-real-secret-before-any-real-deployment
 
+# Phase 3 (splitting the WebSocket Gateway from the Game Node): the two
+# processes below now talk to each other exclusively over Redis pub/sub
+# (see server/src/services/GameNodeBridge/), and `wsgateway`'s
+# ConnectionRegistry / `gamenode`'s Matchmaker+GameSessionManager index
+# stores must be the SAME Redis-backed stores for either to see the other's
+# state at all -- unlike Phase 1's KUNGFUCHESS_REDIS_URL (an opt-in there),
+# this is mandatory for both services now; see gamenode/src/main.cpp and
+# server/src/main.cpp's file comments for what happens if it's unset.
+x-kungfuchess-redis-env: &kungfuchess-redis-env
+  KUNGFUCHESS_REDIS_URL: tcp://redis:6379
+
 services:
-  server:
+  # MIGRATION_PLAN.md Phase 3: renamed from `server`/KungFuChessServer -- this
+  # is now a thin relay holding client connections, no game logic of its own.
+  wsgateway:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime-server
+      target: runtime-wsgateway
     environment:
-      <<: *kungfuchess-shared-env
+      <<: [*kungfuchess-shared-env, *kungfuchess-redis-env]
     ports:
       - "9002:9002" # game WebSocket
       - "9003:9003" # health check (GET /health)
@@ -32,9 +45,29 @@ services:
       - kungfuchess-data:/app/data
     depends_on:
       - postgres
+      - redis
+      - gamenode
+
+  # MIGRATION_PLAN.md Phase 3: GameSessionManager/Matchmaker/GameSession's
+  # tick loop, split off from what used to be the single `server` process --
+  # see ARCHITECTURE.md for the full design. No client-facing port of its
+  # own (all client traffic still enters through `wsgateway`), just its own
+  # health check.
+  gamenode:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-gamenode
+    environment:
+      <<: [*kungfuchess-shared-env, *kungfuchess-redis-env]
+    ports:
+      - "9005:9005" # health check (GET /health)
+    depends_on:
+      - postgres
+      - redis
 
   # MIGRATION_PLAN.md Phase 2: register/login as their own deployable HTTP
-  # service, reusing the same Postgres-backed user store as `server` (see
+  # service, reusing the same Postgres-backed user store as `wsgateway` (see
   # the shared env anchor above) -- see ARCHITECTURE.md for the full design.
   apigateway:
     build:
@@ -57,14 +90,10 @@ services:
     volumes:
       - kungfuchess-postgres:/var/lib/postgresql/data
 
-  # RedisConnectionStore/RedisMatchQueueStore/RedisSessionIndexStore
-  # (MIGRATION_PLAN.md Phase 1) exist now, but local/in-memory storage stays
-  # the server's actual default -- see server/src/main.cpp. Set
-  # KUNGFUCHESS_REDIS_URL on the `server` service (not done here by default)
-  # to opt this deployment's ConnectionRegistry/Matchmaker/GameSessionManager
-  # lookup indexes into Redis all at once, e.g. tcp://redis:6379. Still a
-  # single Game Node (Phase 3+ territory), so this remains a placeholder
-  # from `server`'s point of view either way.
+  # MIGRATION_PLAN.md Phase 1 introduced RedisConnectionStore/
+  # RedisMatchQueueStore/RedisSessionIndexStore as an opt-in; Phase 3 above is
+  # the point this stops being a placeholder -- `wsgateway`/`gamenode` both
+  # require it now (see the redis env anchor above).
   redis:
     image: redis:7-alpine
 

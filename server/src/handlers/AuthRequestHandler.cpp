@@ -11,19 +11,18 @@
 #include "persistence/IUserRepository.h"
 #include "persistence/UserRecord.h"
 #include "services/Connection/ConnectionRegistry.h"
-#include "services/GameSession/GameSession.h"
-#include "services/GameSession/GameSessionManager.h"
+#include "services/GameNodeBridge/IReconnectResolver.h"
 
 AuthRequestHandler::AuthRequestHandler(
     IUserRepository& users,
     security::TokenService& tokenService,
     ConnectionRegistry& connectionRegistry,
-    GameSessionManager& sessionManager,
+    IReconnectResolver& reconnectResolver,
     SendFn sendResume)
     : users(users)
     , tokenService(tokenService)
     , connectionRegistry(connectionRegistry)
-    , sessionManager(sessionManager)
+    , reconnectResolver(reconnectResolver)
     , sendResume(std::move(sendResume))
 {
 }
@@ -37,24 +36,9 @@ std::string AuthRequestHandler::completeLogin(
     // logging back in) resumes their existing session instead of being sent
     // through matchmaking again -- see the class comment for why this makes
     // find_game-right-after-login always safe on the client side.
-    GameSession* existingSession = sessionManager.findSessionByUserId(userId);
-    if (existingSession != nullptr)
-    {
-        sessionManager.rebindConnection(userId, connectionId);
-
-        const std::optional<GameSession::ResumeInfo> resumeInfo = existingSession->resumeInfoFor(userId);
-        if (resumeInfo.has_value())
-        {
-            sendResume(
-                connectionId,
-                protocol::MatchFoundResult{
-                    existingSession->getId(),
-                    resumeInfo->color,
-                    resumeInfo->opponentUsername,
-                    existingSession->getGameView()}
-                    .toJson());
-        }
-    }
+    const std::optional<protocol::MatchFoundResult> resume = reconnectResolver.checkAndRebind(userId, connectionId);
+    if (resume.has_value())
+        sendResume(connectionId, resume->toJson());
 
     // token is always empty here -- only the API Gateway's REST /login
     // issues tokens (see MIGRATION_PLAN.md Phase 2); this process only ever
