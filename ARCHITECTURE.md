@@ -7,6 +7,165 @@ re-read of the sources unnecessary for most tasks. If you change the architectur
 way that makes a section below wrong, update that section in the same change.
 
 Last reviewed: 2026-07-29, against the source tree as of MIGRATION_PLAN.md's
+Phase 4c ("Crash recovery: forfeit-on-crash"), the third sub-phase of
+Phase 4, layered on top of Phase 4b described below. That change: a Game
+Server Shard now refreshes a Redis-backed liveness heartbeat
+(`IShardLoadStore::heartbeat`, new alongside `registerShard`/`isAlive`/
+`forget`; `RedisShardLoadStore` backs it with a real TTL key
+-- `GameNodeConfig::SHARD_HEARTBEAT_TTL_MILLIS`, 6s -- so a crashed shard's
+own key simply expires with nothing having to notice the crash happen;
+`LocalShardLoadStore`'s version is a documented no-op, since there's no real
+cross-process failure to simulate within one process) from `gamenode/`'s own
+tick loop, on a coarser cadence than session-ticking itself
+(`GameNodeConfig::SHARD_HEARTBEAT_INTERVAL_MILLIS`, 2s). The Game Allocator
+runs a new `ShardHealthMonitor` (`server/src/services/Sharding/
+ShardHealthMonitor.h`/`.cpp`) on the same cadence: for any registered shard
+whose heartbeat has lapsed, it enumerates every session that shard was
+hosting (two new `IGameShardRoutingStore` methods, `sessionsForShard`/
+`usersForSession` -- Redis-backed via two more keys, `shard_sessions:
+{shardId}` and `session_users:{sessionId}`, described in
+`RedisGameShardRoutingStore`'s own class comment), resolves each
+participant's *current* connection via `ConnectionRegistry::
+findConnectionForUser` (never a connectionId cached at match time, since a
+reconnect could have superseded it since), and pushes a `GameOverMessage`
+with `reason = "shard_unavailable"` and no winner -- deliberately no rating
+change at all, since a shard crash is nobody's fault, unlike a genuine
+disconnect-timeout forfeit. The dead shard is then `forget()`-ten
+(`IShardLoadStore`) so `GameAllocator::pickShard` never picks it again and
+the same check doesn't keep re-firing for it. While implementing this, a
+real, adjacent gap surfaced and got fixed in the same change (see Known gaps
+#22, updated): a session that finishes *normally* (king capture, or an
+ordinary disconnect-timeout forfeit) wasn't releasing its shard-routing/load
+bookkeeping either, which would have let `ShardHealthMonitor` misforfeit a
+long-finished game's stale routing entry. Fixed via a new, defaulted-to-no-op
+`GameSessionManager::SessionFinishedFn` constructor parameter (so no existing
+caller/test needed updating), invoked from `removeFinishedSessions` with the
+finishing session's id and both participants' userIds (a new small
+`GameSession::userIds()` accessor, safe to read lock-free since userId is
+fixed at construction) -- `gamenode/src/main.cpp` wires this to
+`shardRoutingStore.unbindSession`/`shardLoadStore.decrementLoad`.
+Snapshot-resume (an `ISessionSnapshotStore`, restoring rather than forfeiting
+a crashed shard's games) remains an explicitly deferred, larger follow-up,
+not done here — see MIGRATION_PLAN.md's Phase 4c section and "Known gaps"
+below for what's still open (the Allocator itself is still a single point of
+failure; a forfeited player currently gets no ELO adjustment either way,
+which is the intended behavior, not an oversight).
+
+Previously reviewed against the source tree as of MIGRATION_PLAN.md's
+Phase 4b ("Split gamenode/ into Allocator + Shard processes"), the second
+sub-phase of Phase 4 ("Horizontal scale: Game Allocator + multiple shards"),
+layered on top of Phase 4a described below. That change: a new top-level
+`gameallocator/` module (same precedent as `apigateway/`/`gamenode/`: reuse
+`server/`'s libraries directly, one new `main.cpp`, no relocated/duplicated
+logic) becomes the one true singleton in the topology, owning `Matchmaker`,
+`MatchmakingRequestHandler`, and `GameAllocator` -- all three moved out of
+`gamenode/`, which now owns only `GameSessionManager`/`GameRequestHandler`/
+the tick loop for whichever one shard it is. `GameNodeConfig::
+REQUESTS_CHANNEL` (Phase 3's single, unscoped channel, which only worked
+because exactly one Game Node ever ran) is gone, replaced by
+`GameNodeConfig::MATCHMAKING_REQUESTS_CHANNEL` (one well-known name, since
+there's still exactly one Allocator) and `GameNodeConfig::
+shardRequestsChannel(shardId)` (one channel per registered shard). The
+Gateway (`server/src/main.cpp`) is the thing that now decides which channel
+a given request goes to -- new `GatewayGameRouter` (replacing Phase 3's
+`RemoteGameNodeHandler`, which forwarded everything unconditionally) parses
+just enough of a request's `"type"` to route `find_game` to the Allocator
+and `move`/`jump` to whichever shard `IGameShardRoutingStore` (via the
+session `RedisSessionIndexStore` already resolves the connection to) says
+currently hosts it, and reads both stores read-only for exactly this;
+`connection_closed` now fans out to *both* the Allocator (in case the
+connection was only ever queued) and the resolved shard (if any) via
+`GatewayGameRouter::notifyConnectionClosed`. `RemoteReconnectResolver`
+similarly resolves userId's shard via `IGameShardRoutingStore::
+findShardForUser` first and skips the Redis round trip entirely if there's
+no entry (already "no active session," no need to ask anyone).
+`GameNodeRequestRouter` (the shard side) dropped its `MatchmakingRequestHandler`/
+`Matchmaker` dependencies and the try-matchmaking-then-game dispatch Phase 3
+needed (a shard's channel never receives `find_game` at all now); new
+`GameAllocatorRequestRouter` is the Allocator-side mirror, handling
+`client_message`+`connection_closed` for `Matchmaker` only. The trickiest
+part of this split: `GameAllocator::allocate` (Phase 4a) used to return a
+real, freshly-created `GameSession&` by calling straight into a same-process
+`GameSessionManager`; now the Allocator and the shard that will host the
+session are different processes, so session creation became genuinely
+fire-and-forget (`GameNodeCreateSessionRequest`, a new envelope in
+`GameNodeBridge/GameNodeMessages.h`, published to the picked shard's channel
+and never waited on) instead of a cross-process round trip -- made safe by
+two facts verified against the actual code: `GameFactory::createClassicBoard`
+assigns fixed piece ids (`0, 1, 2, ...`) on every call and a fresh
+`GameEngine`/`RealTimeArbiter`'s clock always starts at `0`, so a freshly
+matched session's initial `GameView` is **always identical** no matter which
+process computes it. `GameAllocator::allocate` therefore builds that initial
+view itself (a throwaway `EventBus`+`GameEngine`+`Controller`, no
+`GameSession`, so no push side effects) and returns an `Allocation{sessionId,
+initialView}` instead of a live session reference; `sessionId` itself is now
+assigned by `GameAllocator` (an incrementing counter, same shape
+`GameSessionManager` used to own before this phase) and handed to the shard
+as a given, not invented there --
+`GameSessionManager::createSession` takes `sessionId` as its first parameter
+now for exactly this reason (a small, mechanical signature change touching
+`GameSessionManager.h`/`.cpp` and every test that called it directly).
+`MatchmakingRequestHandler`'s "already_in_game" guard, which used to call
+`GameSessionManager::findSessionByConnection` directly, now takes
+`ISessionIndexStore&` instead (a read-only lookup against the same
+Redis-backed store every shard's `GameSessionManager` already writes to,
+since this handler no longer shares a process with any `GameSessionManager`
+at all). `docker-compose.yml` gained a `gameallocator` service (its own
+health-check port, `NetworkConfig::GAME_ALLOCATOR_HEALTH_CHECK_PORT` = 9006)
+and renamed `gamenode` to `gamenode-1` (`KUNGFUCHESS_SHARD_ID: shard-1`) --
+the first of what would become `gamenode-2`/`gamenode-3` etc. if Phase 4b's
+exit criteria (actually running more than one shard concurrently) is pursued
+next, deliberately not done as part of this change (see "Known gaps" below);
+`Dockerfile` gained a `runtime-gameallocator` stage, built from the same
+shared build stage that now also builds `KungFuChessGameAllocator`.
+
+Previously reviewed against the source tree as of MIGRATION_PLAN.md's
+Phase 4a ("shard-routing interfaces, still exactly one shard"), the first
+sub-phase of Phase 4 ("Horizontal scale: Game Allocator + multiple shards"),
+layered on top of Phase 3 described below. That change: a new
+`server/src/services/Sharding/` (compiled into `KungFuChessNetwork`, same
+place `GameNodeBridge` lives, for the same "only gamenode/'s own wiring
+needs this" reason) adds the two interfaces a real multi-shard deployment
+needs before it can exist at all: `IGameShardRoutingStore`
+(`LocalGameShardRoutingStore`/`RedisGameShardRoutingStore` — which shard
+hosts a given `sessionId`/`userId`, the thing a Gateway or another Game Node
+process would need to look up once more than one shard exists) and
+`IShardLoadStore` (`LocalShardLoadStore`/`RedisShardLoadStore` — how many
+live sessions each known shard is currently hosting, keyed by shard id in
+one Redis Hash so `knownShards()` is a single `HKEYS`, not a keyspace scan) —
+same Local-default/Redis-alternative dual-implementation pattern every
+store since `IUserRepository` has used. `GameAllocator` (`server/src/
+services/Sharding/GameAllocator.h`/`.cpp`) is the new seam itself: on a
+`Matchmaker::Match`, it picks the least-loaded registered shard, creates the
+session via an *injected* `CreateSessionFn` callback (deliberately not a
+`GameSessionManager&` — see its class comment: this is what lets 4b turn
+that callback into a real cross-process "publish a create-session request"
+without `GameAllocator` itself changing shape at all), records the
+`sessionId`/both `userId`s → `shardId` decision in
+`IGameShardRoutingStore`, and bumps that shard's load.
+`gamenode/src/main.cpp`'s `runTickLoop` now calls `allocator.allocate(match)`
+where it used to call `sessionManager.createSession(white, black)` directly;
+`main()` reads an optional `KUNGFUCHESS_SHARD_ID` (default `"shard-1"`,
+**not** mandatory the way `KUNGFUCHESS_REDIS_URL` is — a single-shard
+deployment works fine with every replica defaulting to the same id, since
+there's nothing to disambiguate yet) and registers it with a
+`RedisShardLoadStore` at startup, before the tick thread that can call
+`allocate` ever starts. Because exactly one shard is ever registered today,
+`GameAllocator::allocate` always resolves to it — this sub-phase is
+provably behavior-equivalent to Phase 3, same as every prior phase's
+interface-first discipline. **Deliberately not yet done** (left for Phase
+4b, once a Game Server Shard's session-end signal has to cross a process
+boundary anyway): nothing calls `IShardLoadStore::decrementLoad` or
+`IGameShardRoutingStore::unbindSession` when a session finishes
+(`GameSessionManager::removeFinishedSessions` doesn't know either store
+exists) — harmless with one shard (load never influences which shard gets
+picked when there's only one), but real bookkeeping debt once a second
+shard exists; see "Known gaps" below. Nothing about the Gateway process,
+`GameNodeConfig`'s channel names, or the Gateway↔Game Node wire protocol
+changed in this sub-phase — that's Phase 4b's job, once there's a second
+real shard to route *to*.
+
+Previously reviewed against the source tree as of MIGRATION_PLAN.md's
 Phase 3 ("Split the WebSocket Gateway from the Game Node (still one shard)"),
 layered on top of Phase 2 described below. That change: `GameSessionManager`,
 `Matchmaker`, `MatchmakingRequestHandler`, `GameRequestHandler`, and the
@@ -386,10 +545,16 @@ of scope (TLS, session persistence across a server restart, spectators, resign/d
     `KungFuChessNetwork` (STATIC, `handlers/`+`network/`+`services/Connection/ConnectionRegistry.cpp`+
     `services/Matchmaking/Matchmaker.cpp`+`services/Connection/LocalConnectionStore.cpp`+
     `services/Connection/RedisConnectionStore.cpp`+`services/Matchmaking/LocalMatchQueueStore.cpp`+
-    `services/Matchmaking/RedisMatchQueueStore.cpp`+`services/GameNodeBridge/*.cpp` (**new,
-    Phase 3** — see below) — the `ConnectionRegistry`/`Matchmaker` family
+    `services/Matchmaking/RedisMatchQueueStore.cpp`+`services/GameNodeBridge/*.cpp` (Phase 3;
+    Phase 4b added `GatewayGameRouter`/`GameAllocatorRequestRouter` here and removed
+    `RemoteGameNodeHandler` — see below)+`services/Sharding/*.cpp` (Phase 4a: `GameAllocator` +
+    `IGameShardRoutingStore`/`IShardLoadStore`'s Local/Redis implementations — see below)
+    — the `ConnectionRegistry`/`Matchmaker` family
     compiled here since none of it depends on `KungFuChessGame`/`KungFuChessGameSession`
-    at all, and the handlers that need them already live in this library)
+    at all, and the handlers that need them already live in this library; `handlers/
+    MatchmakingRequestHandler.cpp` takes `ISessionIndexStore&` instead of
+    `GameSessionManager&` as of Phase 4b, for the same "this runs in a process with
+    no live GameSessionManager anymore" reason)
     `-> KungFuChessPersistence, KungFuChessGameSession, KungFuChessProtocol, ixwebsocket, redis++_static`
     — **as of Phase 2 step B, deliberately does NOT link `KungFuChessAuth`** (only
     `AuthRequestHandler`'s now-removed password branches ever needed it; it now
@@ -413,17 +578,26 @@ of scope (TLS, session persistence across a server restart, spectators, resign/d
     (for `InMemoryUserRepository`). Added to the root `CMakeLists.txt` right after
     `server/` (needs `KungFuChessAuth`, defined there), unconditionally (no
     `BUILD_CLIENT`-style guard — no OpenCV dependency).
-  - `gamenode/` (**new, Phase 3**): no library of its own, just one file —
+  - `gameallocator/` (**new, Phase 4b**): no library of its own, just one file —
+    `KungFuChessGameAllocator` executable (`src/main.cpp`) `-> KungFuChessNetwork,
+    KungFuChessCommon` — same link set as `gamenode/`/`apigateway/`, since this is
+    genuinely the same code (`Matchmaker`/`MatchmakingRequestHandler`/`GameAllocator`,
+    all still compiled inside `KungFuChessNetwork` under `server/`), just constructed
+    by a `main()` that talks to `GameAllocatorRequestRouter`/`GameNodeRequestPublisher`
+    instead of holding a `GameSessionManager` directly. Exactly one replica of this
+    executable ever runs. Added to the root `CMakeLists.txt` right after `server/`
+    (needs `KungFuChessNetwork`), unconditionally — no OpenCV dependency.
+  - `gamenode/` (Phase 3; narrowed by Phase 4b): no library of its own, just one file —
     `KungFuChessGameNode` executable (`src/main.cpp`) `-> KungFuChessNetwork,
-    KungFuChessCommon` — the exact same link set `KungFuChessWsGateway` used
-    before this phase, since this is genuinely the same code
-    (`GameSessionManager`/`Matchmaker`/`MatchmakingRequestHandler`/
-    `GameRequestHandler`, all still compiled inside `KungFuChessNetwork`/
-    `KungFuChessGameSession` under `server/`), just constructed by a different
-    `main()` that talks to `GameNodeBridge` instead of a `WebSocketServer` it
-    doesn't hold. Added to the root `CMakeLists.txt` right after `server/`
-    (needs `KungFuChessNetwork`), unconditionally — no OpenCV dependency, same
-    as `apigateway/`.
+    KungFuChessCommon` — same link set as before, since `GameSessionManager`/
+    `GameRequestHandler` are still compiled inside `KungFuChessNetwork`/
+    `KungFuChessGameSession` under `server/`, just constructed by a `main()` that talks
+    to `GameNodeRequestRouter`/`GameNodePushPublisher` instead of a `WebSocketServer` it
+    doesn't hold. Phase 4b removed `Matchmaker`/`MatchmakingRequestHandler`/
+    `GameAllocator` from this executable's own construction (moved to `gameallocator/`
+    above) — this process now only ever hosts one shard's sessions. Added to the root
+    `CMakeLists.txt` right after `server/` (needs `KungFuChessNetwork`),
+    unconditionally — no OpenCV dependency, same as `apigateway/`.
   - `client/`: `KungFuChessClientNetwork` (STATIC, `network/WebSocketClient` +
     `network/ApiGatewayClient` — **new, Phase 2**, wraps `ix::HttpClient` for the
     REST `register`/`login` calls, the one file that does)
@@ -477,18 +651,50 @@ server/src/game/*       <-- the authoritative domain simulation, depends only on
         ^
 server: GameSession, GameSessionManager   <-- depends on game/ + protocol/ + persistence/
         ^ (IUserRepository, for forfeit score deltas)
-server: ConnectionRegistry, Matchmaker, MatchmakingRequestHandler,
-        GameRequestHandler   <-- depends on the above + persistence/ + common/Security
-        (still compiled here, same as before Phase 3 -- but now only ever
-        *constructed* by gamenode/src/main.cpp, never by server/src/main.cpp,
-        which lost its GameSessionManager&/Matchmaker& entirely -- see
-        "Server / persistence / networking layer" below)
+server: Matchmaker, MatchmakingRequestHandler   <-- depends on persistence/ +
+        services/Connection (ConnectionRegistry) + services/SessionIndex
+        (ISessionIndexStore, Phase 4b: for the "already_in_game" guard, replacing
+        a direct GameSessionManager& dependency -- this class runs in gameallocator/'s
+        own process now, never in the same process as any GameSessionManager)
+        (still compiled here, same as before -- but now only ever *constructed*
+        by gameallocator/src/main.cpp, never by gamenode/ or server/src/main.cpp)
         ^
-server: services/GameNodeBridge/*   <-- new, Phase 3: the Redis pub/sub seam between
-        the two processes above and below. GameNodeRequestPublisher/GameNodePushRouter
-        (the WebSocket Gateway's ends) + GameNodeRequestRouter/GameNodePushPublisher
-        (the Game Node's ends) + IReconnectResolver (LocalReconnectResolver/
-        RemoteReconnectResolver) -- depends on protocol/ + common/Config/GameNodeConfig.h
+server: GameRequestHandler   <-- depends on GameSession/GameSessionManager above +
+        common/Security. Constructed only by gamenode/src/main.cpp -- Phase 4b split
+        this from MatchmakingRequestHandler above, which used to live in the same
+        process (gamenode/, Phase 3) but now doesn't.
+        ^
+server: services/GameNodeBridge/*   <-- Phase 3, reshaped by Phase 4b: the Redis
+        pub/sub seams between the Gateway, the Game Allocator, and a Game Server
+        Shard. GameNodeRequestPublisher/GameNodePushRouter/GatewayGameRouter (the
+        WebSocket Gateway's ends -- GatewayGameRouter replaced Phase 3's
+        RemoteGameNodeHandler, since the Gateway now decides *which* channel a
+        request goes to instead of forwarding everything to one place) +
+        GameAllocatorRequestRouter (the Game Allocator's end, new in Phase 4b) +
+        GameNodeRequestRouter/GameNodePushPublisher (a Game Server Shard's ends) +
+        IReconnectResolver (LocalReconnectResolver/RemoteReconnectResolver, the
+        latter now resolving a shard via services/Sharding's
+        IGameShardRoutingStore below before ever publishing anything) -- depends
+        on protocol/ + common/Config/GameNodeConfig.h + services/Sharding (for the
+        two routers/resolvers that need routing/load lookups)
+        ^
+server: services/Sharding/*   <-- Phase 4a, reshaped by Phase 4b: GameAllocator +
+        IGameShardRoutingStore/IShardLoadStore (Local/Redis). GameAllocator depends
+        only on GameSession's *types* (Player) and common/DTO/GameView -- never
+        GameSessionManager directly: session creation is an injected, fire-and-forget
+        RequestSessionCreationFn callback (Phase 4b: a real cross-process publish to
+        the picked shard's channel; Phase 4a: an in-process call, back when Allocator
+        and shard were the same process), and the initial GameView is computed
+        locally (GameFactory::createClassicBoard's fixed piece ids + a fresh
+        RealTimeArbiter's zero clock make it deterministic) rather than read back
+        from whatever the shard creates. Used only from gameallocator/src/main.cpp's
+        runTickLoop now (moved out of gamenode/ in Phase 4b). Phase 4c added
+        ShardHealthMonitor here too: polls IShardLoadStore::isAlive for every known
+        shard (also new in 4c, alongside heartbeat/forget) and, for a dead one,
+        forfeits every session IGameShardRoutingStore::sessionsForShard/
+        usersForSession (also new in 4c) says it was hosting -- depends on
+        protocol/ (GameOverMessage) but nothing from persistence/, deliberately
+        (see its own class comment for why no rating change happens here).
         ^
 server: AuthRequestHandler   <-- depends on persistence/ + common/Security + the
         IReconnectResolver& above (Phase 3: no longer a raw GameSessionManager&)
@@ -496,11 +702,29 @@ server: AuthRequestHandler   <-- depends on persistence/ + common/Security + the
 server/src/network (WebSocketServer)   <-- per-connection-id request/response + targeted
                                             push transport, unaware of game/ at all
 
-gamenode/src/main.cpp   <-- new, Phase 3: constructs GameSessionManager/Matchmaker/
-  (new, Phase 3)             MatchmakingRequestHandler/GameRequestHandler/the tick loop
-                             (all from server/, unchanged) plus GameNodeRequestRouter/
-                             GameNodePushPublisher (from server/'s GameNodeBridge) --
-                             holds no client connection of its own, only Redis
+gameallocator/src/main.cpp   <-- new, Phase 4b: constructs Matchmaker/
+  (new, Phase 4b)                MatchmakingRequestHandler/GameAllocator/the
+                                 matchmaking tick loop (all from server/, unchanged)
+                                 plus GameAllocatorRequestRouter/GameNodeRequestPublisher/
+                                 GameNodePushPublisher (from server/'s GameNodeBridge) --
+                                 holds no client connection of its own, only Redis. The
+                                 one true singleton in the topology -- exactly one
+                                 replica of this process ever runs.
+
+gamenode/src/main.cpp   <-- Phase 3, narrowed by Phase 4b: constructs
+  (Phase 3;                  GameSessionManager/GameRequestHandler/the (session-only)
+   narrowed Phase 4b)        tick loop (all from server/, unchanged) plus
+                             GameNodeRequestRouter/GameNodePushPublisher (from
+                             server/'s GameNodeBridge) -- holds no client connection
+                             of its own, only Redis. Reads KUNGFUCHESS_SHARD_ID
+                             (default "shard-1") and registers it with
+                             RedisShardLoadStore at startup; subscribes to
+                             GameNodeConfig::shardRequestsChannel(shardId), not a
+                             single shared channel. Phase 4b removed this process's
+                             own Matchmaker/MatchmakingRequestHandler/GameAllocator/
+                             ConnectionRegistry construction entirely (moved to
+                             gameallocator/ above) -- this process only ever hosts
+                             one shard's sessions now.
 
 apigateway/src/*        <-- depends on server/src/services/Auth/AuthService (reused directly,
   (Phase 2)                  not duplicated) + common/Security/TokenService + protocol/
@@ -849,9 +1073,13 @@ not that client has sent a request recently — the old "only refreshes on your 
 limitation is gone.
 
 **Auth gates everything.** `join_game`/`game_joined` no longer exist: a `GameSession` is
-only ever created by `GameSessionManager::createSession`, only ever called from a
-`Matchmaker` pairing (`gamenode/src/main.cpp`'s tick loop, as of Phase 3 — previously
-`server/main.cpp`'s) or, for a reconnect, from an existing session found by user id. A
+only ever created by `GameSessionManager::createSession`, only ever triggered by a
+`Matchmaker` pairing (Phase 3: `gamenode/src/main.cpp`'s own tick loop calling it
+directly, in the same process; Phase 4b: `gameallocator/src/main.cpp`'s tick loop calls
+`GameAllocator::allocate`, which fires a fire-and-forget `GameNodeCreateSessionRequest`
+to whichever shard it picked, and *that* shard's `GameNodeRequestRouter` is what
+actually calls `createSession` now, in a different process from the one that decided
+to) or, for a reconnect, from an existing session found by user id. A
 `move`/`jump` request is resolved to a session via
 `GameSessionManager::findSessionByConnection(connectionId)` — a connection with no
 active session gets `{"error":"no_active_game"}`, and one that names a square holding
@@ -1276,67 +1504,100 @@ than inventing new ones.
     thread below — destroying either while its background thread might still be running
     is a real use-after-free, not just bad practice.
   - `IReconnectResolver`/`LocalReconnectResolver`/`RemoteReconnectResolver` — see the
-    top-of-file Phase 3 review note; `LocalReconnectResolver` wraps a real
+    top-of-file Phase 3/4b review notes; `LocalReconnectResolver` wraps a real
     `GameSessionManager&` (used inside `gamenode/` itself, and by
-    `auth_request_handler_test.cpp`), `RemoteReconnectResolver` does the blocking
-    `GameNodePushRouter`/`GameNodeRequestPublisher` round trip described above (used by
-    the real `KungFuChessWsGateway`).
-  - `RemoteGameNodeHandler` (Gateway side) — same `handle(connectionId, rawJson) ->
-    std::string` shape `MatchmakingRequestHandler`/`GameRequestHandler` already have, so
-    `server/main.cpp`'s `dispatch()` barely changed: forwards via
-    `GameNodeRequestPublisher::forward` and always returns `"{}"` synchronously (an
-    inert, typeless JSON object -- `WebSocketServer::onMessage` always sends the
-    handler's return value back over the socket, so this can't return an empty string
-    without sending an empty frame; no client-side code parses or reacts to it). The
-    *real* reply (whatever `MatchmakingRequestHandler`/`GameRequestHandler` actually
-    produce once `gamenode/` runs the request) arrives later over `PUSHES_CHANNEL`,
-    same as every other async push always has -- verified by reading
-    `GameClient.cpp`/`client/src/main.cpp` that neither the move/jump path nor
-    `waitForMatch` ever depended on move/jump/find_game's old synchronous reply.
+    `auth_request_handler_test.cpp`), `RemoteReconnectResolver` (used by the real
+    `KungFuChessWsGateway`) first asks `IGameShardRoutingStore::findShardForUser` which
+    shard (if any) hosts userId's session -- no entry means "no active session," no
+    Redis round trip at all -- and only then does the blocking
+    `GameNodePushRouter`/`GameNodeRequestPublisher` round trip described above, against
+    that specific shard's channel.
+  - `GatewayGameRouter` (Gateway side, **Phase 4b**, replacing Phase 3's
+    `RemoteGameNodeHandler`) — same `handle(connectionId, rawJson) -> std::string` shape
+    `MatchmakingRequestHandler`/`GameRequestHandler` already have, so `server/main.cpp`'s
+    `dispatch()` barely changed again, but this class does real work Phase 3's version
+    didn't: it parses just the request's `"type"` and sends `find_game` to
+    `GameNodeConfig::MATCHMAKING_REQUESTS_CHANNEL` (the one Allocator) while resolving
+    `move`/`jump` to a specific shard's channel via `ISessionIndexStore::
+    findSessionIdByConnection` + `IGameShardRoutingStore::findShardForSession` (both
+    read-only lookups against Redis-backed stores this class never writes to). Always
+    returns `"{}"` synchronously either way (an inert, typeless JSON object --
+    `WebSocketServer::onMessage` always sends the handler's return value back over the
+    socket, so this can't return an empty string without sending an empty frame; no
+    client-side code parses or reacts to it). The *real* reply (whatever
+    `MatchmakingRequestHandler`/`GameRequestHandler` actually produce once the right
+    process runs the request) arrives later over `PUSHES_CHANNEL`, same as every other
+    async push always has -- verified by reading `GameClient.cpp`/`client/src/main.cpp`
+    that neither the move/jump path nor `waitForMatch` ever depended on move/jump/
+    find_game's old synchronous reply. `notifyConnectionClosed` fans out to *both* the
+    Allocator's channel (in case the connection was only ever queued, never matched --
+    `Matchmaker::removeByConnection` is a no-op otherwise) and the resolved shard's
+    channel if any (`GameSessionManager::onConnectionClosed`).
+  - `GameAllocatorRequestRouter` (Game Allocator side, **new, Phase 4b**) — the
+    find_game-handling half of what Phase 3's `GameNodeRequestRouter` used to be:
+    `client_message` -> `MatchmakingRequestHandler::handle` (find_game only ever arrives
+    here), `connection_closed` -> `Matchmaker::removeByConnection`.
 - `server/src/handlers/MatchmakingRequestHandler` — parallel to
   `AuthRequestHandler`/`GameRequestHandler`: `find_game` requires an authenticated
-  connection (`ConnectionRegistry`) with no existing session
-  (`already_in_game` otherwise) and enqueues it into `Matchmaker`, replying with
-  `SearchingResult` — the actual `match_found`/`no_match` outcome is always a later,
-  unsolicited push from the tick loop (see below), never this handler's synchronous
-  reply. **Phase 3**: this class's content is unchanged, but it's now only ever
-  constructed inside `gamenode/src/main.cpp`, invoked from `GameNodeRequestRouter`
-  rather than directly from `server/main.cpp`'s `dispatch()`.
+  connection (`ConnectionRegistry`) with no existing session (`already_in_game`
+  otherwise, **Phase 4b**: checked via `ISessionIndexStore::findSessionIdByConnection`
+  instead of a direct `GameSessionManager::findSessionByConnection` call, since this
+  class no longer shares a process with any `GameSessionManager`) and enqueues it into
+  `Matchmaker`, replying with `SearchingResult` — the actual `match_found`/`no_match`
+  outcome is always a later, unsolicited push from the tick loop (see below), never this
+  handler's synchronous reply. **Phase 4b**: now constructed inside
+  `gameallocator/src/main.cpp` (moved from `gamenode/`), invoked from
+  `GameAllocatorRequestRouter`.
 - `server/src/handlers/GameRequestHandler` — dispatches `move`/`jump` by resolving
   `GameSessionManager::findSessionByConnection(connectionId)` first (`no_active_game` if
   none), then calling the connection-aware `requestMove`/`requestJump` and translating a
-  rejected `CommandOutcome` into `ErrorResult{reason}`. Never throws. **Phase 3**: same
-  "unchanged content, different constructor" note as `MatchmakingRequestHandler` above.
-- **Server-owned tick loop moved to `gamenode/`** (**Phase 3**, was `server/src/main.cpp`
-  before this phase) — a detached `std::thread` sleeping
-  `TimingConfig::SERVER_TICK_INTERVAL_MILLIS` then calling `sessionManager.tickAll(...)`
-  *and* `matchmaker.tick(nowMillis(), onMatched, onTimedOut)`, forever. `onMatched` calls
-  `sessionManager.createSession` and `pushPublisher.push`es each side a
-  `MatchFoundResult` (**Phase 3**: was `server.sendTo` before this phase); `onTimedOut`
-  pushes `NoMatchResult` the same way. This one thread is still the only place
-  `GameSessionManager` and `Matchmaker` are advanced — both are otherwise inert data
-  structures reacted to by `GameNodeRequestRouter`'s background thread now, instead of
-  `server/main.cpp`'s request-handling threads.
+  rejected `CommandOutcome` into `ErrorResult{reason}`. Never throws. Still constructed
+  only inside `gamenode/src/main.cpp` (unaffected by the Phase 4b split, since this
+  class always needed a real `GameSessionManager&`, which stays shard-side).
+- **Matchmaking tick loop, in `gameallocator/`** (**Phase 4b**, was `gamenode/`'s own
+  tick loop before this phase, and `server/src/main.cpp`'s before Phase 3) — a detached
+  `std::thread` sleeping `TimingConfig::SERVER_TICK_INTERVAL_MILLIS` then calling
+  `matchmaker.tick(nowMillis(), onMatched, onTimedOut)`, forever. `onMatched` now calls
+  `GameAllocator::allocate` (fire-and-forget session creation on whichever shard gets
+  picked, plus a locally-computed deterministic initial `GameView` -- see the top-of-file
+  Phase 4b review note) and `pushPublisher.push`es each side a `MatchFoundResult` using
+  the returned `Allocation`; `onTimedOut` pushes `NoMatchResult` the same way. Session
+  *ticking* (`sessionManager.tickAll(...)`) is a **separate** tick loop now, one per Game
+  Server Shard (`gamenode/src/main.cpp`) -- Phase 4b split what used to be one combined
+  loop into two, since `Matchmaker` and `GameSessionManager` no longer live in the same
+  process.
 - `server/src/main.cpp` (the `KungFuChessWsGateway` executable, **renamed from
-  KungFuChessServer in Phase 3**) composes `AuthRequestHandler` and
-  `RemoteGameNodeHandler` behind one `dispatch()` function: tries auth, and anything it
-  doesn't recognize is forwarded to the Game Node — `MatchmakingRequestHandler`/
-  `GameRequestHandler` are no longer constructed here at all (see `gamenode/src/main.cpp`
+  KungFuChessServer in Phase 3**) composes `AuthRequestHandler` and `GatewayGameRouter`
+  behind one `dispatch()` function: tries auth, and anything it doesn't recognize is
+  routed by `GatewayGameRouter` — `MatchmakingRequestHandler`/`GameRequestHandler` are
+  never constructed here at all (see `gameallocator/src/main.cpp`/`gamenode/src/main.cpp`
   below). `server.setCloseHandler` notifies `ConnectionRegistry` locally and calls
-  `GameNodeRequestPublisher::notifyConnectionClosed` so `gamenode/`'s
-  `Matchmaker::removeByConnection`/`GameSessionManager::onConnectionClosed` still fire
-  for every dropped connection, same as before this phase just across the process
-  boundary now.
-- `gamenode/src/main.cpp` (**new, Phase 3**, the `KungFuChessGameNode` executable) —
-  constructs `GameSessionManager`/`Matchmaker`/`MatchmakingRequestHandler`/
-  `GameRequestHandler`/`LocalReconnectResolver` exactly as `server/src/main.cpp` used to,
-  plus `GameNodeRequestRouter`/`GameNodePushPublisher` in place of a `WebSocketServer` it
+  `GatewayGameRouter::notifyConnectionClosed`, which fans the notification out to both
+  the Allocator and (if routed) a specific shard, so `Matchmaker::removeByConnection`/
+  `GameSessionManager::onConnectionClosed` still fire for every dropped connection, same
+  as before this phase just across two possible process boundaries now instead of one.
+- `gameallocator/src/main.cpp` (**new, Phase 4b**, the `KungFuChessGameAllocator`
+  executable) — constructs `Matchmaker`/`MatchmakingRequestHandler`/`GameAllocator`
+  exactly as `gamenode/src/main.cpp` used to before this phase, plus
+  `GameAllocatorRequestRouter`/`GameNodeRequestPublisher`/`GameNodePushPublisher` in
+  place of the shard-facing pieces it no longer needs, plus its own `HealthCheckServer`
+  on `NetworkConfig::GAME_ALLOCATOR_HEALTH_CHECK_PORT` (9006). `KUNGFUCHESS_REDIS_URL` is
+  mandatory (fails fast with a clear log line if unset), same reasoning as `gamenode/`
+  below. Exactly one replica of this process ever runs.
+- `gamenode/src/main.cpp` (Phase 3, narrowed by **Phase 4b**, the `KungFuChessGameNode`
+  executable) — constructs `GameSessionManager`/`GameRequestHandler`/
+  `LocalReconnectResolver` (no longer `Matchmaker`/`MatchmakingRequestHandler`/
+  `GameAllocator`/`ConnectionRegistry` -- moved to `gameallocator/` above), plus
+  `GameNodeRequestRouter`/`GameNodePushPublisher` in place of a `WebSocketServer` it
   doesn't hold, plus its own `HealthCheckServer` on `NetworkConfig::
-  GAME_NODE_HEALTH_CHECK_PORT` (9005). Unlike `server/src/main.cpp`'s still-opt-in
-  `KUNGFUCHESS_REDIS_URL`, this process treats it as mandatory (fails fast with a clear
-  log line if unset) -- its `ConnectionRegistry`/`Matchmaker`/`GameSessionManager` index
-  stores must be the exact same Redis-backed state the Gateway's are, or `find_game`
-  breaks outright (see the top-of-file Phase 3 review note).
+  GAME_NODE_HEALTH_CHECK_PORT` (9005). Reads `KUNGFUCHESS_SHARD_ID` (default `"shard-1"`)
+  and registers it with a `RedisShardLoadStore` at startup; subscribes to
+  `GameNodeConfig::shardRequestsChannel(shardId)`, not a single shared channel like Phase
+  3's version did. Unlike `server/src/main.cpp`'s still-opt-in `KUNGFUCHESS_REDIS_URL`,
+  this process treats it as mandatory (fails fast with a clear log line if unset) -- its
+  `GameSessionManager`'s session-index store must be the exact same Redis-backed state
+  every other process's is, or `find_game`/reconnect break outright (see the top-of-file
+  Phase 3/4b review notes).
 - `server/CMakeLists.txt` — see "Build system" above for the full target graph.
   `KungFuChessGameSession` is deliberately its own target, not folded into
   `KungFuChessAuth`, even though both live under `src/services/` — a library named
@@ -1525,6 +1786,71 @@ both implemented now — see "Server / persistence / networking layer" above.)
     crash loses every session it was hosting outright (see SERVER_DESIGN.md's "Known
     Gaps" -- still true, still unaddressed until whichever later phase adds session
     snapshotting).
+22. ~~`IShardLoadStore::decrementLoad`/`IGameShardRoutingStore::unbindSession` are never
+    called anywhere~~ -- **fixed in Phase 4c**: `GameSessionManager` gained a defaulted
+    `SessionFinishedFn` constructor parameter (no-op by default, so no existing
+    caller/test needed updating), invoked from `removeFinishedSessions` with the
+    finishing session's id and both participants' userIds
+    (`GameSession::userIds()`, new); `gamenode/src/main.cpp` wires it to
+    `shardRoutingStore.unbindSession`/`shardLoadStore.decrementLoad`. This was
+    originally flagged in Phase 4a as harmless-with-one-shard bookkeeping debt, and
+    became worth fixing in Phase 4c specifically because `ShardHealthMonitor` would
+    otherwise misforfeit a long-finished game's stale routing entry the next time it
+    scanned a shard that later actually crashed. `KUNGFUCHESS_SHARD_ID` is read but not
+    enforced unique -- nothing stops two Game
+    Node processes from both defaulting to `"shard-1"` and silently sharing one
+    load-store entry/one routing identity; `docker-compose.yml`'s `gamenode-1` service
+    sets it explicitly, but a native, non-Docker run of two shards side by side must set
+    distinct values by hand, or `GameAllocator`'s "pick the least-loaded shard" logic
+    degrades into a coin-flip between indistinguishable identities.
+23. **New, from Phase 4b**: the Game Allocator is a genuine single point of failure now
+    -- unlike a Game Server Shard (where losing one only drops the games *it* was
+    hosting, see item 21 above), losing the one Allocator process stops *all* new
+    matches from forming cluster-wide (existing in-flight games on already-allocated
+    shards are unaffected, since a shard never talks to the Allocator once a session
+    exists). This is an accepted, temporary shape for this sub-phase -- MIGRATION_PLAN.md
+    Phase 4's own framing calls this "the one true singleton in the topology" -- not an
+    oversight; a highly-available Allocator (active/passive failover, or making it
+    stateless enough to run more than one safely) is out of scope until whichever later
+    phase actually needs that resilience.
+24. **New, from Phase 4b**: `GatewayGameRouter::handle` drops a `move`/`jump` request
+    silently (just logs a warning) if `IGameShardRoutingStore` has no entry for the
+    requesting connection's session -- this can legitimately happen if a shard crashed
+    between the session being created and this lookup (see item 23's sibling concern for
+    shards), or if a client sends a move for a session it was never actually part of. The
+    client isn't told either way (same "never blocks on a synchronous move/jump reply"
+    contract every prior phase already established) -- it'll notice via the *absence* of
+    a following `game_view` push, not an explicit error. Fine at this scale; a real
+    deployment would want this counted/alerted on (Phase 5 observability territory).
+25. **New, from Phase 4c**: a shard is presumed dead purely from a lapsed heartbeat --
+    there's no distinction between "actually crashed" and "briefly unable to reach Redis
+    while still running fine otherwise" (a network partition between the shard and
+    Redis, not a process crash). `SHARD_HEARTBEAT_TTL_MILLIS` being several multiples of
+    `SHARD_HEARTBEAT_INTERVAL_MILLIS` (6s vs. 2s) narrows this window but doesn't close
+    it; a shard that reconnects to Redis after being presumed dead has already had its
+    sessions forfeited and itself `forget()`-ten, and will silently keep ticking games
+    that the rest of the system now considers gone (its own `GameSessionManager` was
+    never told anything happened) until a client's own dropped connection eventually
+    surfaces the problem some other way. A real deployment would want this shard to
+    also notice "I've been forgotten" (e.g. by checking `IShardLoadStore::knownShards()`
+    still contains its own id) and exit/re-register rather than keep running as an
+    orphan -- not done here, since it's a fundamentally different failure mode
+    (false-positive death, not a real crash) than this sub-phase's own scope.
+26. **New, from Phase 4c**: a shard-crash forfeit applies no ELO rating change at all
+    (see `ShardHealthMonitor`'s class comment for why this is deliberate, not an
+    oversight) -- both players just see the game end with `reason:
+    "shard_unavailable"` and no winner. This is a real, if narrow, difference from
+    every other game-ending path in this codebase (an ordinary king-capture win and a
+    disconnect-timeout forfeit both update rating); flagged here so a future change
+    that wants crash-forfeits to count competitively knows exactly where that decision
+    currently lives.
+27. **New, from Phase 4c**: `ShardHealthMonitor::checkAndForfeitDeadShards` scans every
+    known shard on every call (`IShardLoadStore::knownShards()`), each requiring at
+    least one Redis round trip (`isAlive`) plus, for a dead one, a `sessionsForShard`/
+    per-session `usersForSession` call -- fine at today's scale (a handful of shards),
+    but a real fleet-sized deployment would want this to shard its own scanning work
+    or move to Redis keyspace notifications instead of polling, a Phase 5
+    observability/scale concern, not a correctness one.
 
 ## Where to look for X
 
@@ -1549,30 +1875,35 @@ both implemented now — see "Server / persistence / networking layer" above.)
 | Add a new event / subscribe to a game event | `common/EventBus/Events.h` (new event struct), publisher call sites in `server/src/game/Engine/GameEngine.cpp`, subscriber wiring in `server/src/services/GameSession/GameSession.cpp` (`subscribeToEvents`) |
 | Change the `users` table / user persistence | `server/src/persistence/Sqlite/SqliteDatabase.cpp` (SQLite schema), `server/src/persistence/Sqlite/SqliteUserRepository.cpp` (SQLite impl), `server/src/persistence/Postgres/PostgresDatabase.cpp` (Postgres schema), `server/src/persistence/Postgres/PostgresUserRepository.cpp` (Postgres impl), `server/src/persistence/InMemory/InMemoryUserRepository.cpp` (in-memory impl); tests in `server/tests/sqlite_user_repository_test.cpp`/`postgres_user_repository_test.cpp`/`in_memory_user_repository_test.cpp` |
 | Add a new user-persistence backend | `server/src/persistence/IUserRepository.h` (implement the interface), `server/src/persistence/Factory/RepositoryFactory.cpp` (add a `RepositoryBackend` value + `case`) |
-| Switch which backend `KungFuChessWsGateway`/`KungFuChessGameNode`/`KungFuChessApiGateway` actually opens | `server/src/main.cpp`/`gamenode/src/main.cpp`/`apigateway/src/main.cpp` (each currently `RepositoryBackend::Sqlite` unless `KUNGFUCHESS_POSTGRES_URL` is set — **must be set the same way on all three, see Known gaps #19**) |
+| Switch which backend `KungFuChessWsGateway`/`KungFuChessGameNode`/`KungFuChessApiGateway` actually opens | `server/src/main.cpp`/`gamenode/src/main.cpp`/`apigateway/src/main.cpp` (each currently `RepositoryBackend::Sqlite` unless `KUNGFUCHESS_POSTGRES_URL` is set — **must be set the same way on all three, see Known gaps #19**; `gameallocator/src/main.cpp` needs no user-repository backend at all, see its own review note) |
 | Change password hashing (cost factor, algorithm) | `server/src/security/SecurityConfig.h`, `server/src/security/PasswordHasher.cpp`; tests in `server/tests/password_hasher_test.cpp` |
 | Change register/login business logic (not the DB rows) | `server/src/services/Auth/AuthService.cpp` (called only from `apigateway/src/ApiGatewayRequestHandler.cpp` now — **Phase 2**, `server/`'s own `AuthRequestHandler` never calls it); tests in `server/tests/auth_service_test.cpp`, `apigateway/tests/api_gateway_request_handler_test.cpp` |
 | Add/change a REST endpoint on the API Gateway | `apigateway/src/ApiGatewayRequestHandler.cpp` (request parsing/business logic, testable without HTTP), `apigateway/src/network/ApiGatewayServer.cpp` (path/method routing) |
 | Change how a login token is issued/verified, its TTL, or its signing secret | `common/Security/TokenService.cpp` (issue/verify logic), `common/Security/Sha256.cpp` (the HMAC primitive), `common/Config/TokenConfig.h` (TTL, dev-default secret), `server/src/main.cpp`/`apigateway/src/main.cpp` (`KUNGFUCHESS_TOKEN_SECRET` env wiring — **must match on both, see Known gaps #18**); tests in `server/tests/common_tests/token_service_test.cpp` |
 | Change game-session hosting, tick behavior, or session lookup | `server/src/services/GameSession/GameSession.cpp`/`GameSessionManager.cpp` (unchanged in content — constructed by `gamenode/src/main.cpp` now, not `server/src/main.cpp`); tests in `server/tests/game_session_test.cpp` |
-| Change matchmaking pairing rules, wait timeout, or score range | `common/Config/MatchmakingConfig.h`, `server/src/services/Matchmaking/Matchmaker.cpp` (constructed by `gamenode/src/main.cpp` now); tests in `server/tests/matchmaker_test.cpp` |
+| Change matchmaking pairing rules, wait timeout, or score range | `common/Config/MatchmakingConfig.h`, `server/src/services/Matchmaking/Matchmaker.cpp` (constructed by `gameallocator/src/main.cpp` now — **Phase 4b**, moved from `gamenode/`); tests in `server/tests/matchmaker_test.cpp` |
 | Change connection-identity/matchmaking-queue/session-index storage, or add a new backend for one | `server/src/services/Connection/IConnectionStore.h`/`Matchmaking/IMatchQueueStore.h`/`SessionIndex/ISessionIndexStore.h` (implement the interface), their `Local*`/`Redis*` implementations; tests in `server/tests/local_connection_store_test.cpp`/`redis_connection_store_test.cpp`/`redis_match_queue_store_test.cpp`/`redis_session_index_store_test.cpp` |
-| Switch `ConnectionRegistry`/`Matchmaker`/`GameSessionManager` to Redis-backed storage | `server/src/main.cpp` (`KungFuChessWsGateway`) and `gamenode/src/main.cpp` (`KungFuChessGameNode`) — **Phase 3: `KUNGFUCHESS_REDIS_URL` is mandatory on both now, not opt-in, see Known gaps #21** |
+| Switch `ConnectionRegistry`/`Matchmaker`/`GameSessionManager` to Redis-backed storage | `server/src/main.cpp` (`KungFuChessWsGateway`), `gameallocator/src/main.cpp` (`KungFuChessGameAllocator` — `ConnectionRegistry`/`Matchmaker`), and `gamenode/src/main.cpp` (`KungFuChessGameNode` — `GameSessionManager`) — **Phase 3: `KUNGFUCHESS_REDIS_URL` is mandatory on all of them now, not opt-in, see Known gaps #21** |
 | Change disconnect-grace duration | `common/Config/MatchmakingConfig.h`, `server/src/services/GameSession/GameSession.cpp` (`tick`, `forfeitTo`) |
 | Change ELO rating math (K-factor, starting rating) or how a game outcome is persisted | `common/Config/RatingConfig.h`, `server/src/services/Rating/EloCalculator.cpp` (math), `server/src/services/Rating/RatingService.cpp` (persistence); tests in `server/tests/elo_calculator_test.cpp`/`rating_service_test.cpp` |
-| Change reconnect detection/resume behavior | `server/src/handlers/AuthRequestHandler.cpp` (`completeLogin`, called from the `login_token` branch), `server/src/services/GameNodeBridge/IReconnectResolver.h`/`LocalReconnectResolver.cpp`/`RemoteReconnectResolver.cpp` (**Phase 3**: the seam between them), `server/src/services/GameSession/GameSessionManager.cpp` (`rebindConnection`), `server/src/services/GameSession/GameSession.cpp` (`markReconnected`, `resumeInfoFor`); tests in `server/tests/local_reconnect_resolver_test.cpp`/`auth_request_handler_test.cpp` |
-| Change the Gateway↔Game Node Redis channel names or the reconnect-check timeout | `common/Config/GameNodeConfig.h` |
-| Add a new kind of Gateway↔Game Node message, or change how one is dispatched | `server/src/services/GameNodeBridge/GameNodeMessages.h` (`GameNodeRequest`/`GameNodePush` envelope shape), `GameNodeRequestPublisher.cpp`/`GameNodePushRouter.cpp` (Gateway side), `GameNodeRequestRouter.cpp`/`GameNodePushPublisher.cpp` (Game Node side); tests in `server/tests/game_node_push_router_test.cpp` |
-| Change what `KungFuChessGameNode` constructs/wires at startup | `gamenode/src/main.cpp` |
+| Change reconnect detection/resume behavior | `server/src/handlers/AuthRequestHandler.cpp` (`completeLogin`, called from the `login_token` branch), `server/src/services/GameNodeBridge/IReconnectResolver.h`/`LocalReconnectResolver.cpp`/`RemoteReconnectResolver.cpp` (**Phase 3**: the seam between them; **Phase 4b**: `RemoteReconnectResolver` now resolves a shard via `IGameShardRoutingStore` first), `server/src/services/GameSession/GameSessionManager.cpp` (`rebindConnection`), `server/src/services/GameSession/GameSession.cpp` (`markReconnected`, `resumeInfoFor`); tests in `server/tests/local_reconnect_resolver_test.cpp`/`auth_request_handler_test.cpp` |
+| Change the Gateway↔Allocator↔Shard Redis channel names or the reconnect-check timeout | `common/Config/GameNodeConfig.h` (`MATCHMAKING_REQUESTS_CHANNEL`, `shardRequestsChannel(shardId)`, `PUSHES_CHANNEL`, `RECONNECT_CHECK_TIMEOUT_MILLIS`) |
+| Add a new kind of Gateway/Allocator/Shard message, or change how one is dispatched | `server/src/services/GameNodeBridge/GameNodeMessages.h` (`GameNodeRequest`/`GameNodeCreateSessionRequest`/`GameNodePush` envelope shapes), `GameNodeRequestPublisher.cpp`/`GameNodePushRouter.cpp`/`GatewayGameRouter.cpp` (Gateway side), `GameAllocatorRequestRouter.cpp` (Allocator side), `GameNodeRequestRouter.cpp`/`GameNodePushPublisher.cpp` (Shard side); tests in `server/tests/game_node_push_router_test.cpp` |
+| Change what `KungFuChessGameAllocator`/`KungFuChessGameNode` constructs/wires at startup | `gameallocator/src/main.cpp` (Matchmaker/GameAllocator side) / `gamenode/src/main.cpp` (GameSessionManager side) |
+| Change shard-picking logic, or which shard a session/user routes to | `server/src/services/Sharding/GameAllocator.cpp` (`pickShard`/`allocate`), `IShardLoadStore.h`/`IGameShardRoutingStore.h` (implement a new backend); tests in `server/tests/game_allocator_test.cpp` |
+| Change how a Game Server Shard identifies itself, or what happens to shard-load/routing state when a session ends normally | `gamenode/src/main.cpp` (`KUNGFUCHESS_SHARD_ID` wiring, `GameSessionManager`'s `SessionFinishedFn` callback), `server/src/services/GameSession/GameSessionManager.cpp` (`removeFinishedSessions`); tests in `server/tests/game_session_test.cpp` |
+| Change how a move/jump/find_game request is routed to the Allocator vs. a specific shard | `server/src/services/GameNodeBridge/GatewayGameRouter.cpp` (`handle`, `shardChannelForConnection`) |
+| Change shard heartbeat/TTL timing, or what happens when a shard is presumed dead | `common/Config/GameNodeConfig.h` (`SHARD_HEARTBEAT_INTERVAL_MILLIS`/`SHARD_HEARTBEAT_TTL_MILLIS`), `gamenode/src/main.cpp` (`runTickLoop`'s heartbeat call), `server/src/services/Sharding/ShardHealthMonitor.cpp` (`checkAndForfeitDeadShards`/`forfeitShard`), `IShardLoadStore.h` (`heartbeat`/`isAlive`/`forget`, implement a new backend); tests in `server/tests/shard_health_monitor_test.cpp`, `server/tests/redis_shard_load_store_test.cpp` |
+| Change what happens to a shard-crash forfeit (rating, message shape) | `server/src/services/Sharding/ShardHealthMonitor.cpp` (`forfeitShard` — currently pushes `GameOverMessage{"shard_unavailable", 0}`, no rating change; see Known gaps #26) |
 | Change the auth/matchmaking/game/CLI/GUI hand-off order on the client | `client/src/main.cpp` |
 | Change the REST `register`/`login` calls the client makes, or add a new API Gateway endpoint client-side | `client/src/network/ApiGatewayClient.cpp`, `client/src/cli/CliShell.cpp` |
 | Change the JSON wire format for a message | `protocol/include/protocol/Message.h` (field names, `toJson`/`fromJson`), `protocol/include/protocol/MessageType.h` (the `"type"` string); round-trip tests in `protocol/tests/message_test.cpp` |
 | Add a DTO's own `toJson`/`fromJson`, or change one | `common/DTO/<Type>.h`/`.cpp` — but keep any converting-from-domain constructor in `<Type>FromDomain.cpp` (see DTO layer / Gaps #12 above) |
-| Add a new WebSocket message type/command | If it needs auth (like `login_token`): `server/src/handlers/AuthRequestHandler.cpp`. Otherwise (anything matchmaking/game-shaped): `server/src/handlers/GameRequestHandler.cpp`/`MatchmakingRequestHandler.cpp` in `gamenode/` — **Phase 3**: `server/src/main.cpp`'s own `dispatch()` doesn't need to know about it at all, `RemoteGameNodeHandler` forwards anything auth doesn't recognize unconditionally. Either way: `protocol/include/protocol/Message.h`/`MessageType.h` for the new request/result structs, `client/src/game/GameClient.cpp` or `client/src/cli/CliShell.cpp` for the client side — `WebSocketServer`/`WebSocketClient` themselves don't need to change for a new message type |
+| Add a new WebSocket message type/command | If it needs auth (like `login_token`): `server/src/handlers/AuthRequestHandler.cpp`. Otherwise (anything matchmaking/game-shaped): `server/src/handlers/GameRequestHandler.cpp` (`gamenode/`) or `MatchmakingRequestHandler.cpp` (`gameallocator/`) — **Phase 4b**: `GatewayGameRouter::handle` (`server/`) now needs to know its `"type"` explicitly to route it to the right channel (unlike Phase 3's `RemoteGameNodeHandler`, which forwarded anything auth didn't recognize unconditionally to a single Game Node). Either way: `protocol/include/protocol/Message.h`/`MessageType.h` for the new request/result structs, `client/src/game/GameClient.cpp` or `client/src/cli/CliShell.cpp` for the client side — `WebSocketServer`/`WebSocketClient` themselves don't need to change for a new message type |
 | Change how the server binds/accepts WebSocket connections, sends targeted/broadcast pushes, or reports drops | `server/src/network/WebSocketServer.cpp` (the only file including ixwebsocket's server headers) |
 | Change how the client connects or sends/receives | `client/src/network/WebSocketClient.cpp` (the only file including ixwebsocket's client headers) |
 | Change the health-check endpoint (port, response body) | `server/src/network/HealthCheckServer.cpp`, `common/Config/NetworkConfig.h` (`HEALTH_CHECK_PORT`) |
 | Change log format/level or add a new log call | `common/Logging/Logger.h`/`.cpp` (`common::Logger::debug`/`info`/`warn`/`error`) |
 | Change the Docker image or what's built for it | `Dockerfile`, root `CMakeLists.txt` (`BUILD_CLIENT` option) |
 | Change what's in the local Docker Compose stack | `docker-compose.yml` |
-| Change the interface a process binds (native default vs. inside Docker) | `server/src/main.cpp`/`gamenode/src/main.cpp` (both read `KUNGFUCHESS_HOST`), `server/src/network/WebSocketServer.h`/`.cpp` (`host` constructor parameter, used by `server/src/main.cpp` only) |
+| Change the interface a process binds (native default vs. inside Docker) | `server/src/main.cpp`/`gameallocator/src/main.cpp`/`gamenode/src/main.cpp` (all read `KUNGFUCHESS_HOST`), `server/src/network/WebSocketServer.h`/`.cpp` (`host` constructor parameter, used by `server/src/main.cpp` only) |

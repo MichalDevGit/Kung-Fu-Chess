@@ -1,10 +1,12 @@
 #ifndef GAME_SESSION_MANAGER_H
 #define GAME_SESSION_MANAGER_H
 
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "GameSession.h"
 #include "../SessionIndex/ISessionIndexStore.h"
@@ -30,6 +32,17 @@ class IUserRepository;
 class GameSessionManager
 {
 public:
+    // Fires once, from removeFinishedSessions, for every session that just
+    // finished (game-over or forfeit) and is about to be dropped from the
+    // map -- MIGRATION_PLAN.md Phase 4c's hook for a Game Server Shard to
+    // also clean up IGameShardRoutingStore/IShardLoadStore's cross-process
+    // bookkeeping, which this class has no reason to know exist itself
+    // (same "inject the side effect, don't hard-depend on it" discipline
+    // SendToFn/GameOutcomeFn already established). Defaults to a no-op so
+    // every existing caller/test that only cares about the three
+    // longstanding constructor params is completely unaffected.
+    using SessionFinishedFn = std::function<void(const std::string& sessionId, const std::vector<int>& userIds)>;
+
     // sendTo is shared by every session this manager creates (each
     // GameSession only ever calls it with its own two participants'
     // connection ids). userRepository backs the RatingService every session's
@@ -40,9 +53,18 @@ public:
     // for a multi-node deployment -- see server/src/main.cpp's
     // KUNGFUCHESS_REDIS_URL wiring); the `sessions` map of live GameSession
     // objects itself stays in-process only, unaffected by this.
-    GameSessionManager(GameSession::SendToFn sendTo, IUserRepository& userRepository, ISessionIndexStore& indexStore);
+    GameSessionManager(
+        GameSession::SendToFn sendTo,
+        IUserRepository& userRepository,
+        ISessionIndexStore& indexStore,
+        SessionFinishedFn onSessionFinished = [](const std::string&, const std::vector<int>&) {});
 
-    GameSession& createSession(GameSession::Player white, GameSession::Player black);
+    // sessionId is assigned by the caller (MIGRATION_PLAN.md Phase 4b: the
+    // Game Allocator, which needs to know the id up front to push
+    // MatchFoundResult to both clients without waiting on whichever Game
+    // Server Shard actually ends up hosting the session) rather than
+    // generated here -- this manager no longer invents its own ids.
+    GameSession& createSession(std::string sessionId, GameSession::Player white, GameSession::Player black);
 
     GameSession* findSessionByConnection(const std::string& connectionId);
     GameSession* findSessionByUserId(int userId);
@@ -70,7 +92,7 @@ private:
     GameSession::SendToFn sendTo;
     RatingService ratingService;
     ISessionIndexStore& indexStore;
-    long long nextSessionNumber = 1;
+    SessionFinishedFn onSessionFinished;
 
     std::unordered_map<std::string, std::unique_ptr<GameSession>> sessions;
 

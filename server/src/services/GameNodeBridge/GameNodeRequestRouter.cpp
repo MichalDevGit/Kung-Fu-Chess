@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <thread>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 #include <sw/redis++/redis++.h>
@@ -9,74 +10,61 @@
 #include "GameNodeMessages.h"
 #include "GameNodePushPublisher.h"
 #include "IReconnectResolver.h"
-#include "common/Config/GameNodeConfig.h"
 #include "common/Logging/Logger.h"
 #include "handlers/GameRequestHandler.h"
-#include "handlers/MatchmakingRequestHandler.h"
-#include "protocol/Message.h"
-#include "protocol/MessageType.h"
 #include "services/GameSession/GameSessionManager.h"
-#include "services/Matchmaking/Matchmaker.h"
 
 GameNodeRequestRouter::GameNodeRequestRouter(
     sw::redis::Redis& redis,
-    MatchmakingRequestHandler& matchmakingHandler,
+    std::string channel,
     GameRequestHandler& gameHandler,
-    Matchmaker& matchmaker,
     GameSessionManager& sessionManager,
     IReconnectResolver& reconnectResolver,
     GameNodePushPublisher& pushPublisher)
-    : matchmakingHandler(matchmakingHandler)
-    , gameHandler(gameHandler)
-    , matchmaker(matchmaker)
+    : gameHandler(gameHandler)
     , sessionManager(sessionManager)
     , reconnectResolver(reconnectResolver)
     , pushPublisher(pushPublisher)
     , redis(redis)
+    , channel(std::move(channel))
 {
-}
-
-namespace
-{
-bool isUnknownType(const std::string& responseJson)
-{
-    const nlohmann::json parsed = nlohmann::json::parse(responseJson);
-    return parsed.value("type", std::string()) == protocol::MessageType::Error &&
-           parsed.value("error", std::string()) == "unknown_type";
-}
-}
-
-std::string GameNodeRequestRouter::dispatchClientMessage(const std::string& connectionId, const std::string& rawJson) const
-{
-    const std::string matchmakingResponse = matchmakingHandler.handle(connectionId, rawJson);
-    if (!isUnknownType(matchmakingResponse))
-        return matchmakingResponse;
-
-    return gameHandler.handle(connectionId, rawJson);
 }
 
 void GameNodeRequestRouter::onMessage(const std::string& /*channel*/, const std::string& payload)
 {
-    GameNodeRequest request;
+    nlohmann::json parsed;
     try
     {
-        request = GameNodeRequest::fromJson(nlohmann::json::parse(payload));
+        parsed = nlohmann::json::parse(payload);
     }
     catch (const nlohmann::json::exception&)
     {
         return;
     }
 
+    const std::string kind = parsed.value("kind", std::string());
+
+    if (kind == "create_session")
+    {
+        const GameNodeCreateSessionRequest request = GameNodeCreateSessionRequest::fromJson(parsed);
+        sessionManager.createSession(
+            request.sessionId,
+            GameSession::Player{request.whiteUserId, request.whiteUsername, request.whiteConnectionId},
+            GameSession::Player{request.blackUserId, request.blackUsername, request.blackConnectionId});
+        return;
+    }
+
+    const GameNodeRequest request = GameNodeRequest::fromJson(parsed);
+
     if (request.kind == "client_message")
     {
-        const std::string reply = dispatchClientMessage(request.connectionId, request.rawJson);
+        const std::string reply = gameHandler.handle(request.connectionId, request.rawJson);
         pushPublisher.push(request.connectionId, reply);
         return;
     }
 
     if (request.kind == "connection_closed")
     {
-        matchmaker.removeByConnection(request.connectionId);
         sessionManager.onConnectionClosed(request.connectionId);
         return;
     }
@@ -102,7 +90,7 @@ void GameNodeRequestRouter::start()
                     sw::redis::Subscriber subscriber = redis.subscriber();
                     subscriber.on_message([this](std::string channel, std::string payload)
                         { onMessage(channel, payload); });
-                    subscriber.subscribe(GameNodeConfig::REQUESTS_CHANNEL);
+                    subscriber.subscribe(channel);
 
                     while (true)
                         subscriber.consume();

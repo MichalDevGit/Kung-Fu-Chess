@@ -90,21 +90,105 @@ behavior identical to the monolith.
 
 Only start this once Phase 3 has run stably, since it's the phase that actually needs
 the Matchmaker's shared-queue behavior from Phase 1 to be trustworthy under concurrent
-writers.
+writers. Today's `GameNodeConfig::REQUESTS_CHANNEL`/`PUSHES_CHANNEL` are global pub/sub
+broadcasts that only worked because Phase 3 ran exactly one Game Node — the moment a
+second shard exists, every shard would receive every `move`/`jump`/`reconnect_check`
+unless something routes each request to the shard that actually owns it. That routing
+problem, not scaling per se, is Phase 4's real first problem, so it's split into
+sub-phases the same way every prior phase extracted an interface before splitting a
+process:
 
-- Add the Game Allocator: on a Matchmaker pairing, it picks a shard (by load) and
-  creates the session there, publishing the routing decision (which shard owns which
-  session) to Redis.
-- Scale Game Node → multiple Game Server Shard replicas. Gateway instances look up
-  routing via Redis instead of assuming "the one Game Node."
-- Add session snapshotting (Redis or Postgres) so a shard crash is recoverable instead
-  of silently dropping every game it hosted — call this out explicitly since it's a real
-  behavior change from today (currently a crash loses in-flight games outright).
+### Phase 4a — Shard-routing interfaces, still exactly one shard (done)
 
-**Exit criteria:** multiple Game Server Shards running concurrently, Game Allocator
+- `IGameShardRoutingStore` (`Local`/`Redis`, mirrors `ISessionIndexStore`):
+  `sessionId`/`userId` -> `shardId`.
+- `IShardLoadStore` (`Local`/`Redis`): each shard's live session count, so shard-picking
+  can be "least loaded" instead of a blind round-robin once more than one shard exists.
+- `GameAllocator`: given a `Matchmaker::Match`, picks a shard via `IShardLoadStore`,
+  creates the session through an *injected* callback (not a direct
+  `GameSessionManager&`, specifically so Phase 4b can turn that callback into a real
+  cross-process call without `GameAllocator` itself changing shape), and records the
+  decision in `IGameShardRoutingStore`.
+- `gamenode/src/main.cpp` reads `KUNGFUCHESS_SHARD_ID` (default `"shard-1"`, not yet
+  mandatory) and registers it before the tick loop starts; `runTickLoop`'s `onMatched`
+  now goes through `GameAllocator::allocate` instead of calling
+  `sessionManager.createSession` directly.
+- Exactly one shard is ever registered in this sub-phase, so it's provably
+  behavior-equivalent to Phase 3 — same equivalence gate every prior phase used.
+  **Deliberately deferred to 4b:** nothing decrements a shard's load or unbinds routing
+  when a session finishes yet (harmless with one shard; see ARCHITECTURE.md Known gaps
+  #22), and the Gateway process/wire protocol are completely untouched.
+
+### Phase 4b — Split `gamenode/` into Allocator + Shard processes (done)
+
+- New top-level `gameallocator/` module (same precedent as `apigateway/`): owns
+  `Matchmaker`, `MatchmakingRequestHandler`, `GameAllocator`, and its own matchmaking
+  tick loop. This is the one true singleton in the topology.
+- `gamenode/` shrinks to `GameSessionManager` + `GameRequestHandler` + a
+  session-ticking-only loop, reading `KUNGFUCHESS_SHARD_ID` (default `"shard-1"`) to
+  pick its own request channel (`GameNodeConfig::shardRequestsChannel(shardId)`,
+  replacing the single global `REQUESTS_CHANNEL`) and to register itself with
+  `RedisShardLoadStore`.
+- Gateway side: new `GatewayGameRouter` (replacing `RemoteGameNodeHandler`) parses a
+  request's `"type"` — `find_game` goes to `GameNodeConfig::
+  MATCHMAKING_REQUESTS_CHANNEL` (the one Allocator); `move`/`jump` resolve the target
+  shard via `ISessionIndexStore` (connection → session) + `IGameShardRoutingStore`
+  (session → shard) and publish to that shard's specific channel;
+  `connection_closed` fans out to both the Allocator's channel and the resolved shard's,
+  if any. `RemoteReconnectResolver` resolves userId's shard the same way and skips the
+  Redis round trip entirely if there's no routing entry (already "no active session").
+- The one design wrinkle not anticipated when this phase was scoped: `GameAllocator`
+  (Phase 4a) used to create a session in-process and read back a real `GameSession&` for
+  its id/initial `GameView`. Once the Allocator and the shard that hosts a session are
+  different processes, that's no longer available synchronously. Resolved without a
+  round trip: `GameAllocator` assigns the session id itself and fires a fire-and-forget
+  `GameNodeCreateSessionRequest` at the picked shard, and computes the initial
+  `GameView` locally — safe because `GameFactory::createClassicBoard` assigns fixed
+  piece ids on every call and a fresh engine's clock always starts at 0, so the
+  starting position is provably identical no matter which process builds it.
+  `GameSessionManager::createSession` now takes the session id as a parameter instead
+  of generating its own, so the Allocator and whichever shard actually hosts the
+  session agree on it without needing to ask each other.
+- `docker-compose.yml`/`Dockerfile`: added a `gameallocator` service/`runtime-gameallocator`
+  stage; renamed the `gamenode` service to `gamenode-1` (`KUNGFUCHESS_SHARD_ID: shard-1`)
+  — the first of what would become `gamenode-2`/`gamenode-3` etc. Actually running more
+  than one shard concurrently (the exit criteria below) is deliberately left to a
+  follow-up change: Compose scaling can't inject distinct per-replica env vars cleanly,
+  so scaling out means adding more named services, not flipping a flag.
+
+### Phase 4c — Crash recovery: forfeit-on-crash (done)
+
+- `IShardLoadStore` gained `heartbeat`/`isAlive`/`forget`: a Game Server Shard refreshes
+  its own heartbeat from its tick loop every `GameNodeConfig::
+  SHARD_HEARTBEAT_INTERVAL_MILLIS` (2s); `RedisShardLoadStore` backs this with a real
+  TTL key (`SHARD_HEARTBEAT_TTL_MILLIS`, 6s) so a crashed shard's own key simply
+  expires with nothing having to notice the crash happen.
+- New `ShardHealthMonitor`, run from the Game Allocator's tick loop on the same
+  cadence: for any shard whose heartbeat has lapsed, enumerates every session it was
+  hosting (`IGameShardRoutingStore` gained `sessionsForShard`/`usersForSession` for
+  this), resolves each participant's *current* connection (never one cached at match
+  time, since a reconnect could have superseded it), and pushes
+  `GameOverMessage{"shard_unavailable", 0}` — deliberately no rating change, since a
+  crash is nobody's fault. The dead shard is then forgotten so it's never picked again.
+- Adjacent fix that surfaced while implementing this: a session finishing *normally*
+  wasn't releasing its shard-routing/load bookkeeping either, which would have let
+  `ShardHealthMonitor` misforfeit a stale entry for an already-finished game.
+  `GameSessionManager` gained a defaulted (no-op) `SessionFinishedFn` callback,
+  wired by `gamenode/` to clean up both stores on every normal session end too.
+- Snapshot-resume (`ISessionSnapshotStore`, `GameSession` state serialized on each
+  `EventBus` mutation) remains a legitimate, larger follow-up — not done here, since
+  "either [forfeit or resume] is fine as long as it's a defined, tested behavior rather
+  than silence" (see exit criteria below).
+
+**Exit criteria (met):** multiple Game Server Shards running concurrently, Game Allocator
 load-balancing between them, a killed shard's games either fail gracefully (forfeit) or
 resume from a snapshot — either is fine as long as it's a defined, tested behavior
-rather than silence.
+rather than silence. Verified live against the real `docker-compose` stack (`gamenode-1`
++ `gamenode-2`, distinct `KUNGFUCHESS_SHARD_ID`s): two concurrent matches landed on the
+two different shards (`GameAllocator`'s least-loaded picking), `docker kill` on the
+container hosting one of them delivered a `game_over{reason: "shard_unavailable"}` to
+both its players within the heartbeat TTL window while the other match — on the
+surviving shard — kept ticking and accepting moves throughout, completely unaffected.
 
 ## Phase 5 — Full orchestration & observability
 

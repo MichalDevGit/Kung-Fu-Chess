@@ -32,6 +32,11 @@ const std::string& GameSession::getId() const
     return id;
 }
 
+std::vector<int> GameSession::userIds() const
+{
+    return {white.userId, black.userId};
+}
+
 GameSession::Player* GameSession::playerByConnection(const std::string& connectionId)
 {
     if (white.connectionId == connectionId)

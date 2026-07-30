@@ -6,15 +6,15 @@
 #include "protocol/Message.h"
 #include "protocol/MessageType.h"
 #include "services/Connection/ConnectionRegistry.h"
-#include "services/GameSession/GameSessionManager.h"
 #include "services/Matchmaking/Matchmaker.h"
+#include "services/SessionIndex/ISessionIndexStore.h"
 #include "common/MonotonicClock.h"
 
 MatchmakingRequestHandler::MatchmakingRequestHandler(
-    ConnectionRegistry& connectionRegistry, Matchmaker& matchmaker, GameSessionManager& sessionManager)
+    ConnectionRegistry& connectionRegistry, Matchmaker& matchmaker, ISessionIndexStore& sessionIndexStore)
     : connectionRegistry(connectionRegistry)
     , matchmaker(matchmaker)
-    , sessionManager(sessionManager)
+    , sessionIndexStore(sessionIndexStore)
 {
 }
 
@@ -32,7 +32,7 @@ std::string MatchmakingRequestHandler::handle(const std::string& connectionId, c
         if (!user.has_value())
             return protocol::ErrorResult{"not_authenticated"}.toJson();
 
-        if (sessionManager.findSessionByConnection(connectionId) != nullptr)
+        if (sessionIndexStore.findSessionIdByConnection(connectionId).has_value())
             return protocol::ErrorResult{"already_in_game"}.toJson();
 
         if (matchmaker.isQueued(connectionId))

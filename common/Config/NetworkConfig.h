@@ -23,11 +23,20 @@ namespace NetworkConfig
     constexpr const char* API_GATEWAY_HOST = "127.0.0.1";
     constexpr int API_GATEWAY_PORT = 9004;
 
-    // Game Node's own liveness probe (MIGRATION_PLAN.md Phase 3) -- a
-    // separate process from the WebSocket Gateway now, so it needs its own
-    // health-check port; it has no client-facing port of its own otherwise
-    // (all client traffic still enters through the Gateway's DEFAULT_PORT).
+    // A Game Server Shard's own liveness probe (MIGRATION_PLAN.md Phase 3,
+    // still shared by every gamenode/ replica in Phase 4b -- each replica
+    // binds it on its own container/host, so this is one port number reused
+    // per-instance, not a single shared port). Separate process from the
+    // WebSocket Gateway, so it needs its own health-check port; it has no
+    // client-facing port of its own otherwise (all client traffic still
+    // enters through the Gateway's DEFAULT_PORT).
     constexpr int GAME_NODE_HEALTH_CHECK_PORT = 9005;
+
+    // The Game Allocator's own liveness probe (MIGRATION_PLAN.md Phase 4b) --
+    // exactly one Allocator process ever runs, so unlike
+    // GAME_NODE_HEALTH_CHECK_PORT above this is a genuinely singular port,
+    // not reused per-replica.
+    constexpr int GAME_ALLOCATOR_HEALTH_CHECK_PORT = 9006;
 }
 
 #endif

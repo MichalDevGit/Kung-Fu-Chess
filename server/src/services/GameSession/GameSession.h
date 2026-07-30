@@ -5,6 +5,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "../../../../common/EventBus/EventBus.h"
 #include "../../../../common/DTO/GameView.h"
@@ -67,6 +68,13 @@ public:
     GameSession(std::string id, Player white, Player black, SendToFn sendTo, GameOutcomeFn gameOutcome);
 
     const std::string& getId() const;
+
+    // {white.userId, black.userId} -- both fixed at construction, never
+    // touched by markReconnected (only connectionId is mutable), so this is
+    // safe to read without taking `mutex`. Used by GameSessionManager to
+    // tell IGameShardRoutingStore/IShardLoadStore which userIds a finished
+    // session's routing entries belonged to (MIGRATION_PLAN.md Phase 4c).
+    std::vector<int> userIds() const;
 
     CommandOutcome requestMove(const std::string& connectionId, const Position& from, const Position& to);
     CommandOutcome requestJump(const std::string& connectionId, const Position& position);

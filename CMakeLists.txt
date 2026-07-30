@@ -53,9 +53,19 @@ add_subdirectory(server)
 # builds unconditionally, including in the server-only Docker/Linux build.
 add_subdirectory(apigateway)
 
-# ---- Game Node (MIGRATION_PLAN.md Phase 3: GameSessionManager/Matchmaker/
-# GameSession's tick loop as their own deployable process, split off from
-# what used to be KungFuChessServer -- see gamenode/CMakeLists.txt) ----
+# ---- Game Allocator (MIGRATION_PLAN.md Phase 4b: Matchmaker/
+# MatchmakingRequestHandler/GameAllocator as their own singleton deployable
+# process, split off from gamenode/ -- see gameallocator/CMakeLists.txt) ----
+# Must come before gamenode/ only by convention (no actual dependency between
+# the two); after server/ -- links KungFuChessNetwork/KungFuChessCommon,
+# which server/'s CMakeLists.txt defines. No OpenCV dependency either.
+add_subdirectory(gameallocator)
+
+# ---- Game Node / Game Server Shard (MIGRATION_PLAN.md Phase 3:
+# GameSessionManager/GameSession's tick loop as their own deployable process,
+# split off from what used to be KungFuChessServer; Phase 4b narrowed this
+# further to just the shard-hosting half once Matchmaker/GameAllocator moved
+# to gameallocator/ above -- see gamenode/CMakeLists.txt) ----
 # Must come after server/ -- links KungFuChessNetwork/KungFuChessCommon,
 # which server/'s CMakeLists.txt defines. No OpenCV dependency either.
 add_subdirectory(gamenode)

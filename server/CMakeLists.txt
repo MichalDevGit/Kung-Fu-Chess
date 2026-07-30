@@ -217,18 +217,26 @@ target_link_libraries(KungFuChessGameSession PUBLIC KungFuChessGame KungFuChessP
 # which now live only in the apigateway/ process. KungFuChessPersistence is
 # linked directly here for that IUserRepository dependency (previously
 # arrived transitively through KungFuChessAuth).
+#
+# src/services/Sharding/ (new, Phase 4a): GameAllocator + IGameShardRoutingStore/
+# IShardLoadStore (Local/Redis) -- compiled here rather than into
+# KungFuChessGameSession specifically because GameAllocator only needs
+# GameSession's *types* (Player, the GameSession& it returns), never
+# GameSessionManager directly (createSession is injected as a callback --
+# see GameAllocator.h), the same "only gamenode/'s own wiring needs this"
+# reasoning GameNodeBridge already lives here for.
 file(GLOB NETWORK_SOURCES "src/handlers/*.cpp" "src/network/*.cpp"
     "src/services/Connection/ConnectionRegistry.cpp" "src/services/Matchmaking/Matchmaker.cpp"
     "src/services/Connection/LocalConnectionStore.cpp" "src/services/Connection/RedisConnectionStore.cpp"
     "src/services/Matchmaking/LocalMatchQueueStore.cpp" "src/services/Matchmaking/RedisMatchQueueStore.cpp"
-    "src/services/GameNodeBridge/*.cpp")
+    "src/services/GameNodeBridge/*.cpp" "src/services/Sharding/*.cpp")
 file(GLOB NETWORK_HEADERS "src/handlers/*.h" "src/network/*.h"
     "src/services/Connection/ConnectionRegistry.h" "src/services/Matchmaking/Matchmaker.h"
     "src/services/Connection/AuthenticatedUser.h" "src/services/Connection/IConnectionStore.h"
     "src/services/Connection/LocalConnectionStore.h" "src/services/Connection/RedisConnectionStore.h"
     "src/services/Matchmaking/MatchmakingTypes.h" "src/services/Matchmaking/IMatchQueueStore.h"
     "src/services/Matchmaking/LocalMatchQueueStore.h" "src/services/Matchmaking/RedisMatchQueueStore.h"
-    "src/services/GameNodeBridge/*.h")
+    "src/services/GameNodeBridge/*.h" "src/services/Sharding/*.h")
 
 add_library(KungFuChessNetwork STATIC ${NETWORK_SOURCES} ${NETWORK_HEADERS})
 target_include_directories(KungFuChessNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)

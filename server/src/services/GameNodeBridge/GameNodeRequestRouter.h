@@ -11,40 +11,46 @@ namespace redis
 }
 }
 
-class MatchmakingRequestHandler;
 class GameRequestHandler;
-class Matchmaker;
 class GameSessionManager;
 class IReconnectResolver;
 class GameNodePushPublisher;
 
-// Game Node-side end of GameNodeConfig::REQUESTS_CHANNEL (MIGRATION_PLAN.md
-// Phase 3) -- the process that actually owns Matchmaker/GameSessionManager
-// now reacts to whatever the WebSocket Gateway forwards, instead of a
-// WebSocketServer's request/close handlers calling into them directly.
-// Three kinds of GameNodeRequest, same three things server/main.cpp used to
-// do in-process:
-//  - "client_message": runs the exact matchmaking-then-game dispatch
-//    server/main.cpp's dispatch() used to run for anything past auth, then
-//    publishes the reply via GameNodePushPublisher::push -- this is what
-//    lets MatchmakingRequestHandler/GameRequestHandler themselves stay
-//    completely unchanged (see server/tests/matchmaker_test.cpp,
-//    game_request_handler_test.cpp -- still valid, still exercising these
-//    same classes in place).
-//  - "connection_closed": calls matchmaker.removeByConnection/
-//    sessionManager.onConnectionClosed -- what WebSocketServer's close
-//    handler used to do directly when it lived in the same process.
+// A specific Game Server Shard's end of its own
+// GameNodeConfig::shardRequestsChannel(shardId) (MIGRATION_PLAN.md Phase 3,
+// reshaped by Phase 4b once a shard stopped also being the one place
+// Matchmaker/MatchmakingRequestHandler lived -- see GameAllocatorRequestRouter
+// for that half now). Four kinds of request ever arrive on this channel:
+//  - "create_session": the Game Allocator's fire-and-forget instruction to
+//    actually construct the GameSession it already decided (elsewhere) to
+//    route here -- calls sessionManager.createSession with the given,
+//    pre-assigned sessionId. No reply is published; the Allocator doesn't
+//    wait for one (see GameAllocator's class comment for why).
+//  - "client_message": runs GameRequestHandler's move/jump dispatch, then
+//    publishes the reply via GameNodePushPublisher::push -- what lets
+//    GameRequestHandler itself stay completely unchanged (see
+//    server/tests/game_request_handler_test.cpp -- still valid, still
+//    exercising this same class in place). find_game never arrives here
+//    (MIGRATION_PLAN.md Phase 4b: the Gateway sends that to the Allocator's
+//    channel instead), so there's no matchmaking-then-game fallback dispatch
+//    to run here anymore, unlike Phase 3's version of this class.
+//  - "connection_closed": calls sessionManager.onConnectionClosed -- what
+//    WebSocketServer's close handler used to do directly when it lived in
+//    the same process. (matchmaker.removeByConnection, Phase 3's other half
+//    of this, is now GameAllocatorRequestRouter's job on its own channel.)
 //  - "reconnect_check": answers via reconnectResolver.checkAndRebind and
 //    publishes the result via GameNodePushPublisher::pushReconnectCheckResult
-//    -- the Game Node side of RemoteReconnectResolver's blocking wait.
+//    -- the shard side of RemoteReconnectResolver's blocking wait. Only ever
+//    arrives here because the Gateway already resolved, via
+//    IGameShardRoutingStore, that *this* shard is the one hosting userId's
+//    session -- see RemoteReconnectResolver.
 class GameNodeRequestRouter
 {
 public:
     GameNodeRequestRouter(
         sw::redis::Redis& redis,
-        MatchmakingRequestHandler& matchmakingHandler,
+        std::string channel,
         GameRequestHandler& gameHandler,
-        Matchmaker& matchmaker,
         GameSessionManager& sessionManager,
         IReconnectResolver& reconnectResolver,
         GameNodePushPublisher& pushPublisher);
@@ -54,16 +60,14 @@ public:
     void start();
 
 private:
-    MatchmakingRequestHandler& matchmakingHandler;
     GameRequestHandler& gameHandler;
-    Matchmaker& matchmaker;
     GameSessionManager& sessionManager;
     IReconnectResolver& reconnectResolver;
     GameNodePushPublisher& pushPublisher;
     sw::redis::Redis& redis;
+    std::string channel;
 
     void onMessage(const std::string& channel, const std::string& payload);
-    std::string dispatchClientMessage(const std::string& connectionId, const std::string& rawJson) const;
 };
 
 #endif

@@ -25,7 +25,7 @@ TEST_CASE("GameRequestHandler handles move for the requester's own piece and ret
     InMemoryUserRepository repo;
     LocalSessionIndexStore indexStore;
     GameSessionManager manager([](const std::string&, const std::string&) {}, repo, indexStore);
-    manager.createSession(whitePlayer(), blackPlayer());
+    manager.createSession("test-session", whitePlayer(), blackPlayer());
     GameRequestHandler handler(manager);
 
     nlohmann::json request{
@@ -41,7 +41,7 @@ TEST_CASE("GameRequestHandler rejects a move for the opponent's piece")
     InMemoryUserRepository repo;
     LocalSessionIndexStore indexStore;
     GameSessionManager manager([](const std::string&, const std::string&) {}, repo, indexStore);
-    manager.createSession(whitePlayer(), blackPlayer());
+    manager.createSession("test-session", whitePlayer(), blackPlayer());
     GameRequestHandler handler(manager);
 
     // Row 1 is a black pawn on the classic starting board -- white's
@@ -59,7 +59,7 @@ TEST_CASE("GameRequestHandler handles jump and returns a fresh GameView snapshot
     InMemoryUserRepository repo;
     LocalSessionIndexStore indexStore;
     GameSessionManager manager([](const std::string&, const std::string&) {}, repo, indexStore);
-    manager.createSession(whitePlayer(), blackPlayer());
+    manager.createSession("test-session", whitePlayer(), blackPlayer());
     GameRequestHandler handler(manager);
 
     nlohmann::json request{{"type", "jump"}, {"row", 6}, {"col", 4}};
@@ -114,7 +114,7 @@ TEST_CASE("GameRequestHandler returns an error when a required field is missing"
     InMemoryUserRepository repo;
     LocalSessionIndexStore indexStore;
     GameSessionManager manager([](const std::string&, const std::string&) {}, repo, indexStore);
-    manager.createSession(whitePlayer(), blackPlayer());
+    manager.createSession("test-session", whitePlayer(), blackPlayer());
     GameRequestHandler handler(manager);
 
     nlohmann::json request{{"type", "move"}, {"fromRow", 6}}; // missing fromCol/toRow/toCol

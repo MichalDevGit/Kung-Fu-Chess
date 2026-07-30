@@ -17,13 +17,15 @@ x-kungfuchess-shared-env: &kungfuchess-shared-env
   KUNGFUCHESS_POSTGRES_URL: postgresql://kungfuchess:kungfuchess@postgres:5432/kungfuchess
   KUNGFUCHESS_TOKEN_SECRET: change-me-to-a-real-secret-before-any-real-deployment
 
-# Phase 3 (splitting the WebSocket Gateway from the Game Node): the two
-# processes below now talk to each other exclusively over Redis pub/sub
-# (see server/src/services/GameNodeBridge/), and `wsgateway`'s
-# ConnectionRegistry / `gamenode`'s Matchmaker+GameSessionManager index
-# stores must be the SAME Redis-backed stores for either to see the other's
-# state at all -- unlike Phase 1's KUNGFUCHESS_REDIS_URL (an opt-in there),
-# this is mandatory for both services now; see gamenode/src/main.cpp and
+# Phase 3 (splitting the WebSocket Gateway from the Game Node), reshaped by
+# Phase 4b (splitting the Game Node itself into a singleton Game Allocator
+# plus one-or-more Game Server Shards): every service below now talks to the
+# others exclusively over Redis pub/sub (see server/src/services/
+# GameNodeBridge/), and `wsgateway`'s/`gameallocator`'s/every `gamenode-*`'s
+# state stores must be the SAME Redis-backed stores for any of them to see
+# each other's state at all -- unlike Phase 1's KUNGFUCHESS_REDIS_URL (an
+# opt-in there), this is mandatory for all of them now; see
+# gameallocator/src/main.cpp, gamenode/src/main.cpp, and
 # server/src/main.cpp's file comments for what happens if it's unset.
 x-kungfuchess-redis-env: &kungfuchess-redis-env
   KUNGFUCHESS_REDIS_URL: tcp://redis:6379
@@ -46,22 +48,65 @@ services:
     depends_on:
       - postgres
       - redis
-      - gamenode
+      - gameallocator
+      - gamenode-1
+      - gamenode-2
 
-  # MIGRATION_PLAN.md Phase 3: GameSessionManager/Matchmaker/GameSession's
-  # tick loop, split off from what used to be the single `server` process --
-  # see ARCHITECTURE.md for the full design. No client-facing port of its
-  # own (all client traffic still enters through `wsgateway`), just its own
-  # health check.
-  gamenode:
+  # MIGRATION_PLAN.md Phase 4b: Matchmaker/MatchmakingRequestHandler/
+  # GameAllocator, split off from what used to be the single `gamenode`
+  # process -- see ARCHITECTURE.md for the full design. Exactly one replica
+  # of this service ever runs (unlike `gamenode-*` below): a second Matchmaker
+  # instance racing the first over the same Redis-backed queue is exactly the
+  # split-brain Phase 1 externalized the queue store to make survivable, not
+  # something to actually run twice. No client-facing port of its own, just
+  # its own health check.
+  gameallocator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-gameallocator
+    environment:
+      <<: *kungfuchess-redis-env
+    ports:
+      - "9006:9006" # health check (GET /health)
+    depends_on:
+      - redis
+
+  # MIGRATION_PLAN.md Phase 3: one shard's GameSessionManager/GameSession's
+  # tick loop -- see ARCHITECTURE.md for the full design. No client-facing
+  # port of its own (all client traffic still enters through `wsgateway`),
+  # just its own health check. Phase 4b: this is now one of potentially
+  # several named shard services, each with a distinct KUNGFUCHESS_SHARD_ID
+  # -- `gamenode-1`/`gamenode-2` below are two concurrently-running shards
+  # (Phase 4's exit criteria), each just a copy of the same block with a
+  # different shard id and host health-check port (Compose's own `--scale`
+  # can't inject a distinct env var per replica, which is why these are
+  # separate named services instead of one scaled service). Add a
+  # `gamenode-3` etc. the same way if more capacity is ever needed.
+  gamenode-1:
     build:
       context: .
       dockerfile: Dockerfile
       target: runtime-gamenode
     environment:
       <<: [*kungfuchess-shared-env, *kungfuchess-redis-env]
+      KUNGFUCHESS_SHARD_ID: shard-1
     ports:
       - "9005:9005" # health check (GET /health)
+    depends_on:
+      - postgres
+      - redis
+
+  gamenode-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-gamenode
+    environment:
+      <<: [*kungfuchess-shared-env, *kungfuchess-redis-env]
+      KUNGFUCHESS_SHARD_ID: shard-2
+    ports:
+      - "9007:9005" # health check (GET /health) -- 9005 is gamenode-1's, remapped here
     depends_on:
       - postgres
       - redis

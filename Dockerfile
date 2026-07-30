@@ -42,13 +42,14 @@ COPY common ./common
 COPY protocol ./protocol
 COPY server ./server
 COPY apigateway ./apigateway
+COPY gameallocator ./gameallocator
 COPY gamenode ./gamenode
 
 # FetchContent (ixwebsocket/nlohmann_json/SQLiteCpp/bcrypt/hiredis/
 # redis-plus-plus) needs network access at configure time, same as a local
 # dev build -- nothing here is vendored differently for Docker.
 RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_CLIENT=OFF \
-    && cmake --build build --target KungFuChessWsGateway KungFuChessApiGateway KungFuChessGameNode --parallel
+    && cmake --build build --target KungFuChessWsGateway KungFuChessApiGateway KungFuChessGameAllocator KungFuChessGameNode --parallel
 
 # ---- Runtime stage: KungFuChessWsGateway (the WebSocket-holding relay --
 # MIGRATION_PLAN.md Phase 3 renamed this from KungFuChessServer once
@@ -85,10 +86,36 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
 
 ENTRYPOINT ["/app/KungFuChessWsGateway"]
 
+# ---- Runtime stage: KungFuChessGameAllocator (MIGRATION_PLAN.md Phase 4b --
+# owns Matchmaker/MatchmakingRequestHandler/GameAllocator, split off from
+# KungFuChessGameNode; exactly one replica of this service ever runs, unlike
+# KungFuChessGameNode below -- see gameallocator/src/main.cpp) ----
+FROM ubuntu:22.04 AS runtime-gameallocator
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=build /src/build/gameallocator/KungFuChessGameAllocator ./KungFuChessGameAllocator
+
+ENV KUNGFUCHESS_HOST=0.0.0.0
+
+EXPOSE 9006
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://127.0.0.1:9006/health || exit 1
+
+ENTRYPOINT ["/app/KungFuChessGameAllocator"]
+
 # ---- Runtime stage: KungFuChessGameNode (MIGRATION_PLAN.md Phase 3 -- owns
-# GameSessionManager/Matchmaker/GameSession's tick loop, split off from
-# KungFuChessServer; talks to KungFuChessWsGateway exclusively over Redis
-# pub/sub, see server/src/services/GameNodeBridge/) ----
+# one shard's GameSessionManager/GameSession's tick loop, split off from
+# KungFuChessServer; talks to KungFuChessWsGateway/KungFuChessGameAllocator
+# exclusively over Redis pub/sub, see server/src/services/GameNodeBridge/.
+# Phase 4b: run one container per shard, each with a distinct
+# KUNGFUCHESS_SHARD_ID -- see docker-compose.yml) ----
 FROM ubuntu:22.04 AS runtime-gamenode
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

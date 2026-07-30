@@ -200,19 +200,65 @@ TEST_CASE("GameSession stops sending to a disconnected participant and resumes a
     CHECK(blackSent.size() >= 1); // opponent_reconnected (from markReconnected) already landed above; this is the tick's own push
 }
 
-TEST_CASE("GameSessionManager::createSession assigns distinct session ids and indexes both connections/users")
+TEST_CASE("GameSessionManager::createSession indexes both connections and users under the given session id")
 {
     InMemoryUserRepository repo;
     LocalSessionIndexStore indexStore;
     GameSessionManager manager([](const std::string&, const std::string&) {}, repo, indexStore);
 
-    GameSession& session = manager.createSession(whitePlayer(), blackPlayer());
+    GameSession& session = manager.createSession("test-session", whitePlayer(), blackPlayer());
 
     CHECK(manager.findSessionByConnection("conn-white") == &session);
     CHECK(manager.findSessionByConnection("conn-black") == &session);
     CHECK(manager.findSessionByUserId(1) == &session);
     CHECK(manager.findSessionByUserId(2) == &session);
     CHECK(manager.findSessionByConnection("conn-stranger") == nullptr);
+}
+
+TEST_CASE("GameSessionManager invokes onSessionFinished (with the session's id and both userIds) once a king is captured, and drops the session")
+{
+    // MIGRATION_PLAN.md Phase 4c: this is the seam a Game Server Shard uses
+    // to also release IGameShardRoutingStore/IShardLoadStore's cross-process
+    // bookkeeping once a session finishes normally, not just its
+    // ISessionIndexStore entry -- see gamenode/src/main.cpp's wiring.
+    InMemoryUserRepository repo;
+    LocalSessionIndexStore indexStore;
+    std::vector<std::pair<std::string, std::vector<int>>> finishedCalls;
+
+    GameSessionManager manager(
+        [](const std::string&, const std::string&) {},
+        repo,
+        indexStore,
+        [&](const std::string& sessionId, const std::vector<int>& userIds)
+        { finishedCalls.emplace_back(sessionId, userIds); });
+
+    GameSession& session = manager.createSession("test-session", whitePlayer(), blackPlayer());
+
+    // Same knight-hop king-capture sequence as the GameSession-level
+    // regression test above, just driven through the manager's tickAll
+    // instead of the session's own tick, to exercise
+    // GameSessionManager::removeFinishedSessions specifically.
+    const std::vector<std::pair<Position, Position>> hops = {
+        {Position(7, 1), Position(5, 2)},
+        {Position(5, 2), Position(4, 4)},
+        {Position(4, 4), Position(2, 3)},
+        {Position(2, 3), Position(0, 4)}, // captures the black king
+    };
+
+    for (std::size_t i = 0; i < hops.size(); ++i)
+    {
+        session.requestMove("conn-white", hops[i].first, hops[i].second);
+        manager.tickAll(1100);
+        if (i + 1 < hops.size())
+            manager.tickAll(2100);
+    }
+
+    REQUIRE(finishedCalls.size() == 1);
+    CHECK(finishedCalls[0].first == "test-session");
+    CHECK(std::count(finishedCalls[0].second.begin(), finishedCalls[0].second.end(), 1) == 1);
+    CHECK(std::count(finishedCalls[0].second.begin(), finishedCalls[0].second.end(), 2) == 1);
+
+    CHECK(manager.findSessionByConnection("conn-white") == nullptr);
 }
 
 TEST_CASE("GameSessionManager::tickAll advances every session's clock")
@@ -228,7 +274,7 @@ TEST_CASE("GameSessionManager::tickAll advances every session's clock")
         },
         repo, indexStore);
 
-    GameSession& session = manager.createSession(whitePlayer(), blackPlayer());
+    GameSession& session = manager.createSession("test-session", whitePlayer(), blackPlayer());
     session.requestMove("conn-white", Position(6, 4), Position(5, 4));
     sent.clear();
 
@@ -250,7 +296,7 @@ TEST_CASE("GameSessionManager::onConnectionClosed marks the right session's part
         [&](const std::string&, const std::string& json) { sent.push_back(json); },
         repo, indexStore);
 
-    manager.createSession(whitePlayer(), blackPlayer());
+    manager.createSession("test-session", whitePlayer(), blackPlayer());
     sent.clear();
 
     manager.onConnectionClosed("conn-black");
@@ -278,7 +324,7 @@ TEST_CASE("A session does not forfeit immediately on disconnect -- only after th
         [&](const std::string&, const std::string& json) { sent.push_back(json); },
         repo, indexStore);
 
-    manager.createSession(whitePlayer(), blackPlayer());
+    manager.createSession("test-session", whitePlayer(), blackPlayer());
     manager.onConnectionClosed("conn-black");
     sent.clear();
 
@@ -296,7 +342,7 @@ TEST_CASE("GameSessionManager::rebindConnection moves a session's connection ind
     LocalSessionIndexStore indexStore;
     GameSessionManager manager([](const std::string&, const std::string&) {}, repo, indexStore);
 
-    GameSession& session = manager.createSession(whitePlayer(), blackPlayer());
+    GameSession& session = manager.createSession("test-session", whitePlayer(), blackPlayer());
 
     CHECK(manager.rebindConnection(2, "conn-black-2") == true);
     CHECK(manager.findSessionByConnection("conn-black-2") == &session);

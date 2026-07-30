@@ -28,7 +28,7 @@ TEST_CASE("LocalReconnectResolver: a user with an active session is rebound and 
     Fixture fixture;
 
     GameSession& session = fixture.sessionManager.createSession(
-        GameSession::Player{1, "alice", "alice-old-conn"}, GameSession::Player{2, "bob", "bob-conn"});
+        "test-session", GameSession::Player{1, "alice", "alice-old-conn"}, GameSession::Player{2, "bob", "bob-conn"});
 
     const std::optional<protocol::MatchFoundResult> resume = fixture.resolver.checkAndRebind(1, "alice-new-conn");
 
@@ -52,7 +52,7 @@ TEST_CASE("LocalReconnectResolver: the other participant is unaffected by a reco
     Fixture fixture;
 
     fixture.sessionManager.createSession(
-        GameSession::Player{1, "alice", "alice-conn"}, GameSession::Player{2, "bob", "bob-conn"});
+        "test-session", GameSession::Player{1, "alice", "alice-conn"}, GameSession::Player{2, "bob", "bob-conn"});
 
     const std::optional<protocol::MatchFoundResult> resume = fixture.resolver.checkAndRebind(2, "bob-new-conn");
 

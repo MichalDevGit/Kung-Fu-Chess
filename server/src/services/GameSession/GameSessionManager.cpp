@@ -4,18 +4,18 @@
 
 #include "../../persistence/IUserRepository.h"
 
-GameSessionManager::GameSessionManager(GameSession::SendToFn sendTo, IUserRepository& userRepository, ISessionIndexStore& indexStore)
+GameSessionManager::GameSessionManager(
+    GameSession::SendToFn sendTo, IUserRepository& userRepository, ISessionIndexStore& indexStore, SessionFinishedFn onSessionFinished)
     : sendTo(std::move(sendTo))
     , ratingService(userRepository)
     , indexStore(indexStore)
+    , onSessionFinished(std::move(onSessionFinished))
 {
 }
 
-GameSession& GameSessionManager::createSession(GameSession::Player white, GameSession::Player black)
+GameSession& GameSessionManager::createSession(std::string sessionId, GameSession::Player white, GameSession::Player black)
 {
     std::lock_guard<std::mutex> lock(mutex);
-
-    const std::string sessionId = "session-" + std::to_string(nextSessionNumber++);
 
     RatingService& rating = ratingService;
     auto gameOutcome = [&rating](int winnerUserId, int loserUserId)
@@ -117,6 +117,7 @@ void GameSessionManager::removeFinishedSessions()
             continue;
         }
 
+        onSessionFinished(it->first, it->second->userIds());
         indexStore.unbindSession(it->first);
         it = sessions.erase(it);
     }
